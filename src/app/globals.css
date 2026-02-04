@@ -1,0 +1,254 @@
+@import "tailwindcss";
+
+/* ============================================
+   CLUBHOUSE DESIGN SYSTEM
+   Dark Bottle Green + Gold Accents
+   ============================================ */
+
+:root {
+  /* Core Colors */
+  --background: #1B4D3E;
+  --foreground: #FFFFFF;
+  --primary: #1B4D3E;
+  --secondary: #C9A227;
+  --primary-foreground: #FFFFFF;
+  --secondary-foreground: #1B4D3E;
+
+  /* Extended Palette */
+  --gold: #C9A227;
+  --gold-light: #D4AF37;
+  --gold-dark: #B8941F;
+  --green-dark: #1B4D3E;
+  --green-light: #2A6B54;
+
+  /* Glassmorphism */
+  --glass-bg: rgba(27, 77, 62, 0.4);
+  --glass-border: rgba(201, 162, 39, 0.3);
+  --glass-border-hover: rgba(201, 162, 39, 0.5);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+
+/* ============================================
+   GLASSMORPHISM CARD
+   Usage: <div className="glass-card">...</div>
+   ============================================ */
+
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  border-radius: 1rem;
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+
+.glass-card-hover {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  border-radius: 1rem;
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+}
+
+.glass-card-hover:hover {
+  border-color: var(--glass-border-hover);
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+/* ============================================
+   GOLD BUTTON
+   Usage: <button className="btn-gold">...</button>
+   ============================================ */
+
+.btn-gold {
+  background-color: var(--gold);
+  color: var(--green-dark);
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  transition: all 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-gold:hover {
+  background-color: var(--gold-light);
+}
+
+.btn-gold:active {
+  background-color: var(--gold-dark);
+}
+
+.btn-gold:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+   OUTLINE BUTTON (Gold Border)
+   Usage: <button className="btn-outline">...</button>
+   ============================================ */
+
+.btn-outline {
+  background-color: transparent;
+  color: var(--gold);
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  border: 2px solid var(--gold);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.btn-outline:hover {
+  background-color: rgba(201, 162, 39, 0.1);
+}
+
+.btn-outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+   PRIMARY BUTTON (Green)
+   Usage: <button className="btn-primary">...</button>
+   ============================================ */
+
+.btn-primary {
+  background-color: var(--green-light);
+  color: var(--primary-foreground);
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background-color: var(--green-dark);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+   INPUT FIELDS
+   ============================================ */
+
+.input-field {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  color: var(--foreground);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input-field::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.2);
+}
+
+/* Select dropdown styling */
+.input-field option {
+  background-color: var(--green-dark);
+  color: var(--foreground);
+}
+
+/* ============================================
+   CHECKBOX STYLES
+   ============================================ */
+
+.checkbox-custom {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--gold);
+}
+
+/* ============================================
+   TEXT UTILITIES
+   ============================================ */
+
+.text-gold {
+  color: var(--gold);
+}
+
+.text-green {
+  color: var(--green-dark);
+}
+
+.text-muted {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ============================================
+   DIVIDER
+   ============================================ */
+
+.divider {
+  height: 1px;
+  background: var(--glass-border);
+  width: 100%;
+}
+
+/* ============================================
+   SCROLLBAR STYLING
+   ============================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(201, 162, 39, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(201, 162, 39, 0.5);
+}
