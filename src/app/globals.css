@@ -194,6 +194,28 @@ body {
   color: var(--foreground);
 }
 
+/* Input field for light backgrounds (white cards) */
+.input-field-light {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  color: #111827;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input-field-light::placeholder {
+  color: #6b7280;
+}
+
+.input-field-light:focus {
+  outline: none;
+  border-color: var(--green-dark);
+  box-shadow: 0 0 0 3px rgba(13, 77, 43, 0.2);
+}
+
 /* ============================================
    CHECKBOX STYLES
    ============================================ */

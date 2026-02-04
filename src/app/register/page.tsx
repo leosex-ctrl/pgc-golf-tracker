@@ -315,7 +315,7 @@ export default function RegisterPage() {
                 name="fullName"
                 value={formData.fullName}
                 onChange={handleInputChange}
-                className={`input-field ${errors.fullName ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.fullName ? 'border-red-500' : ''}`}
                 placeholder="Enter your full name"
               />
               {errors.fullName && (
@@ -333,7 +333,7 @@ export default function RegisterPage() {
                 name="email"
                 value={formData.email}
                 onChange={handleInputChange}
-                className={`input-field ${errors.email ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.email ? 'border-red-500' : ''}`}
                 placeholder="Enter your email address"
               />
               {errors.email && (
@@ -351,7 +351,7 @@ export default function RegisterPage() {
                 name="password"
                 value={formData.password}
                 onChange={handleInputChange}
-                className={`input-field ${errors.password ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.password ? 'border-red-500' : ''}`}
                 placeholder="Minimum 8 characters"
               />
               {errors.password && (
@@ -369,7 +369,7 @@ export default function RegisterPage() {
                 name="confirmPassword"
                 value={formData.confirmPassword}
                 onChange={handleInputChange}
-                className={`input-field ${errors.confirmPassword ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.confirmPassword ? 'border-red-500' : ''}`}
                 placeholder="Re-enter your password"
               />
               {errors.confirmPassword && (
@@ -387,7 +387,7 @@ export default function RegisterPage() {
                 name="dateOfBirth"
                 value={formData.dateOfBirth}
                 onChange={handleInputChange}
-                className={`input-field ${errors.dateOfBirth ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.dateOfBirth ? 'border-red-500' : ''}`}
               />
               {errors.dateOfBirth && (
                 <p className="mt-1 text-sm text-red-500">{errors.dateOfBirth}</p>
@@ -404,7 +404,7 @@ export default function RegisterPage() {
                 name="homeClub"
                 value={formData.homeClub}
                 onChange={handleInputChange}
-                className={`input-field ${errors.homeClub ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.homeClub ? 'border-red-500' : ''}`}
                 placeholder="Enter your home golf club"
               />
               {errors.homeClub && (
@@ -422,7 +422,7 @@ export default function RegisterPage() {
                 name="handicapIndex"
                 value={formData.handicapIndex}
                 onChange={handleInputChange}
-                className={`input-field ${errors.handicapIndex ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.handicapIndex ? 'border-red-500' : ''}`}
                 placeholder="e.g., 12.4"
               />
               {errors.handicapIndex && (
@@ -440,7 +440,7 @@ export default function RegisterPage() {
                 name="guiNumber"
                 value={formData.guiNumber}
                 onChange={handleInputChange}
-                className={`input-field ${errors.guiNumber ? 'border-red-500' : ''}`}
+                className={`input-field-light ${errors.guiNumber ? 'border-red-500' : ''}`}
                 placeholder="Enter your Golf Ireland membership number"
               />
               {errors.guiNumber && (
