@@ -101,7 +101,11 @@ const navItems: NavItem[] = [
 // SIDEBAR COMPONENT
 // ============================================
 
-export default function Sidebar() {
+interface SidebarProps {
+  onMobileNav?: () => void
+}
+
+export default function Sidebar({ onMobileNav }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [isAdmin, setIsAdmin] = useState(false)
@@ -168,7 +172,13 @@ export default function Sidebar() {
     >
       {/* Logo / Brand */}
       <div className="p-6" style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.3)' }}>
-        <Link href="/dashboard" className="flex items-center gap-3">
+        <Link
+          href="/dashboard"
+          onClick={() => {
+            if (onMobileNav) onMobileNav()
+          }}
+          className="flex items-center gap-3"
+        >
           <div
             className="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-lg"
             style={{ backgroundColor: '#C9A227', color: '#153c30' }}
@@ -193,6 +203,9 @@ export default function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  onClick={() => {
+                    if (onMobileNav) onMobileNav()
+                  }}
                   className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group"
                   style={{
                     backgroundColor: active ? 'rgba(201, 162, 39, 0.15)' : 'transparent',
@@ -224,7 +237,10 @@ export default function Sidebar() {
       {/* Footer / Logout */}
       <div className="p-4" style={{ borderTop: '1px solid rgba(201, 162, 39, 0.3)' }}>
         <button
-          onClick={handleLogout}
+          onClick={() => {
+            if (onMobileNav) onMobileNav()
+            handleLogout()
+          }}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group"
           style={{ color: 'rgba(255, 255, 255, 0.6)' }}
         >

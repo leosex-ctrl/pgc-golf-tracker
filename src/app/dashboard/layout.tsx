@@ -12,6 +12,8 @@ export default function DashboardLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
+  const handleMobileNav = () => setSidebarOpen(false)
+
   return (
     <ApprovalGuard>
       <div className="flex flex-col h-screen overflow-hidden">
@@ -36,7 +38,7 @@ export default function DashboardLayout({
 
               {/* Sidebar Panel */}
               <div className="relative z-10 h-full w-64">
-                <Sidebar />
+                <Sidebar onMobileNav={handleMobileNav} />
               </div>
             </div>
           )}
