@@ -19,6 +19,8 @@ interface UpdateCourseData {
   rating?: number | null
   slope?: number | null
   location?: string | null
+  course_type?: string | null
+  tee_color?: string | null
 }
 
 // ============================================
@@ -189,6 +191,8 @@ export async function updateCourse(courseId: string, data: UpdateCourseData): Pr
         ...(data.rating !== undefined && { rating: data.rating }),
         ...(data.slope !== undefined && { slope: data.slope }),
         ...(data.location !== undefined && { location: data.location }),
+        ...(data.course_type !== undefined && { course_type: data.course_type }),
+        ...(data.tee_color !== undefined && { tee_color: data.tee_color }),
       })
       .eq('id', courseId)
 

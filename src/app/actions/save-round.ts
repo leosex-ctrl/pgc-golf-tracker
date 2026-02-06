@@ -137,7 +137,7 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
       .insert({
         user_id: user.id,
         course_id: courseId,
-        date_played: data.date,
+        date_of_round: data.date,
         weather: weatherCategory,
         temp_c: tempC,
         wind_speed_kph: windSpeedKph,

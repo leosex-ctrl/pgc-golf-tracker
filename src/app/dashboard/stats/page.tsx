@@ -1,174 +1,541 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
-import Link from 'next/link'
-import { BarChart3, PlusCircle, TrendingDown, TrendingUp, Target, Sun, Cloud, CloudRain, Wind, Thermometer } from 'lucide-react'
-import { CoursePerformanceChart } from '@/components/DashboardCharts'
+import { useRouter } from 'next/navigation'
+import {
+  Users,
+  TrendingUp,
+  Trophy,
+  Target,
+  Calendar,
+  Shield,
+  ChevronDown,
+  Activity,
+} from 'lucide-react'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  Legend,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+  ReferenceLine,
+  Cell,
+} from 'recharts'
 
 // ============================================
-// TYPES - STRICT SCHEMA MATCH
+// TYPES
 // ============================================
 
-interface Round {
+interface RoundDetail {
   id: string
-  date_of_round: string
-  total_strokes: number | null
-  course_id: string
-  weather: string | null
-  temp_c: number | null
-  wind_speed_kph: number | null
-  courses: {
-    name: string
+  dateOfRound: string
+  totalStrokes: number
+  handicapDifferential: number | null
+  weatherConditions: string | null
+  courseType: string | null
+  courseName: string | null
+  coursePar: number | null
+}
+
+interface PlayerStats {
+  userId: string
+  fullName: string
+  avatarUrl: string | null
+  handicapIndex: number | null
+  totalRounds: number
+  averageScore: number | null
+  bestScore: number | null
+  lastRoundScore: number | null
+  lastRoundDate: string | null
+  rounds: RoundDetail[]
+}
+
+type TimeframeFilter = 'all' | '3months' | 'ytd'
+
+// ============================================
+// CONSTANTS
+// ============================================
+
+const PGC_GOLD = '#C9A227'
+const PGC_DARK_GREEN = '#0D4D2B'
+
+const CHART_COLORS = [
+  '#C9A227', // Gold
+  '#22C55E', // Green
+  '#3B82F6', // Blue
+  '#A855F7', // Purple
+  '#F97316', // Orange
+  '#EC4899', // Pink
+  '#14B8A6', // Teal
+  '#EF4444', // Red
+]
+
+const COURSE_TYPE_COLORS: Record<string, string> = {
+  Links: '#3B82F6',
+  Parkland: '#22C55E',
+  Heathland: '#A855F7',
+  Desert: '#F97316',
+  Resort: '#EC4899',
+  Unknown: '#6B7280',
+}
+
+const WEATHER_MAP: Record<string, string> = {
+  sunny: 'Sun',
+  clear: 'Sun',
+  cloudy: 'Cloud',
+  overcast: 'Cloud',
+  partly_cloudy: 'Cloud',
+  rainy: 'Rain',
+  rain: 'Rain',
+  drizzle: 'Rain',
+  windy: 'Wind',
+  wind: 'Wind',
+  breezy: 'Wind',
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+function getTimeframeStartDate(filter: TimeframeFilter): Date | null {
+  const now = new Date()
+  switch (filter) {
+    case '3months':
+      return new Date(now.getFullYear(), now.getMonth() - 3, now.getDate())
+    case 'ytd':
+      return new Date(now.getFullYear(), 0, 1)
+    default:
+      return null
   }
 }
 
-// Weather icon helper
-const getWeatherIcon = (weather: string | null) => {
-  if (!weather) return null
-  const w = weather.toLowerCase()
-  if (w.includes('rain')) return <CloudRain className="w-4 h-4 text-blue-400" />
-  if (w.includes('sun') || w.includes('clear')) return <Sun className="w-4 h-4 text-yellow-400" />
-  if (w.includes('wind')) return <Wind className="w-4 h-4 text-blue-300" />
-  if (w.includes('cloud') || w.includes('overcast')) return <Cloud className="w-4 h-4 text-gray-400" />
-  return <Cloud className="w-4 h-4 text-gray-400" />
+function filterRoundsByTimeframe(rounds: RoundDetail[], filter: TimeframeFilter): RoundDetail[] {
+  const startDate = getTimeframeStartDate(filter)
+  if (!startDate) return rounds
+  return rounds.filter(r => new Date(r.dateOfRound) >= startDate)
 }
 
-interface PerformanceStats {
-  averageScore: number | null
-  bestScore: number | null
-  worstScore: number | null
-  totalRounds: number
-  trend: 'improving' | 'declining' | 'stable' | null
+function isActivePlayer(rounds: RoundDetail[]): boolean {
+  const thirtyDaysAgo = new Date()
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+  return rounds.some(r => new Date(r.dateOfRound) >= thirtyDaysAgo)
+}
+
+function normalizeWeather(weather: string | null): string {
+  if (!weather) return 'Unknown'
+  const lower = weather.toLowerCase().replace(/\s+/g, '_')
+  return WEATHER_MAP[lower] || 'Unknown'
 }
 
 // ============================================
 // COMPONENT
 // ============================================
 
-export default function StatsPage() {
-  const [rounds, setRounds] = useState<Round[]>([])
-  const [courseData, setCourseData] = useState<{ courseName: string; avgScore: number }[]>([])
-  const [stats, setStats] = useState<PerformanceStats>({
-    averageScore: null,
-    bestScore: null,
-    worstScore: null,
-    totalRounds: 0,
-    trend: null,
-  })
+export default function SquadInsightsPage() {
+  const router = useRouter()
+
+  // Auth & Role state
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [isAdminOrSuper, setIsAdminOrSuper] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState('')
+
+  // Squad Insights state
+  const [squadPlayerStats, setSquadPlayerStats] = useState<PlayerStats[]>([])
+  const [isLoadingSquadStats, setIsLoadingSquadStats] = useState(false)
+  const [squadError, setSquadError] = useState('')
+
+  // Filter state
+  const [timeframeFilter, setTimeframeFilter] = useState<TimeframeFilter>('all')
 
   useEffect(() => {
-    fetchData()
+    checkAuthAndFetch()
   }, [])
 
-  const fetchData = async () => {
+  const checkAuthAndFetch = async () => {
     try {
       const supabase = createClient()
       const { data: { user }, error: authError } = await supabase.auth.getUser()
 
       if (authError || !user) {
-        console.error('Supabase Error:', JSON.stringify(authError, null, 2))
+        router.push('/login')
         return
       }
 
-      // ============================================
-      // FETCH ROUNDS WITH COURSE JOIN
-      // Schema: rounds(*, courses(name))
-      // ============================================
-      const { data: roundsData, error: roundsError } = await supabase
-        .from('rounds')
-        .select('*, courses(name)')
-        .eq('user_id', user.id)
-        .order('date_of_round', { ascending: false })
-        .limit(20)
+      setCurrentUserId(user.id)
 
-      if (roundsError) {
-        console.error('Supabase Error:', JSON.stringify(roundsError, null, 2))
-        setError(`Failed to load rounds: ${roundsError.message || 'Unknown error'}`)
-        return
+      // Check if user is Admin or Super Admin
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      if (profileData) {
+        const normalizedRole = (profileData.role || '').toLowerCase().replace(/\s+/g, '_')
+        const hasAccess = ['admin', 'super_admin'].includes(normalizedRole)
+        setIsAdminOrSuper(hasAccess)
+
+        if (!hasAccess) {
+          router.push('/dashboard/statistics')
+          return
+        }
+
+        setIsLoading(false)
+        fetchSquadInsights(user.id)
+      } else {
+        router.push('/dashboard/statistics')
       }
-
-      if (roundsData && roundsData.length > 0) {
-        setRounds(roundsData as Round[])
-        calculateStats(roundsData as Round[])
-        calculateCoursePerformance(roundsData as Round[])
-      }
-
     } catch (err) {
-      console.error('Supabase Error:', JSON.stringify(err, null, 2))
-      setError('An unexpected error occurred')
-    } finally {
+      console.error('Auth check error:', err)
       setIsLoading(false)
     }
   }
 
-  const calculateStats = (roundsData: Round[]) => {
-    const validRounds = roundsData.filter(r => r.total_strokes !== null && r.total_strokes > 0)
+  const fetchSquadInsights = async (userId: string) => {
+    setIsLoadingSquadStats(true)
+    setSquadError('')
 
-    if (validRounds.length === 0) {
-      setStats({
-        averageScore: null,
-        bestScore: null,
-        worstScore: null,
-        totalRounds: 0,
-        trend: null,
+    try {
+      const supabase = createClient()
+
+      // Step 1: Get squads linked to this admin
+      const { data: adminSquads, error: adminSquadsError } = await supabase
+        .from('admin_squads')
+        .select('squad_id')
+        .eq('admin_id', userId)
+
+      if (adminSquadsError) {
+        console.error('Error fetching admin squads:', adminSquadsError)
+        setSquadError('Failed to load squad assignments')
+        setIsLoadingSquadStats(false)
+        return
+      }
+
+      if (!adminSquads || adminSquads.length === 0) {
+        setSquadPlayerStats([])
+        setIsLoadingSquadStats(false)
+        return
+      }
+
+      const squadIds = adminSquads.map(as => as.squad_id)
+
+      // Step 2: Get all members from those squads
+      const { data: squadMembers, error: membersError } = await supabase
+        .from('squad_members')
+        .select('user_id')
+        .in('squad_id', squadIds)
+
+      if (membersError) {
+        console.error('Error fetching squad members:', membersError)
+        setSquadError('Failed to load squad members')
+        setIsLoadingSquadStats(false)
+        return
+      }
+
+      if (!squadMembers || squadMembers.length === 0) {
+        setSquadPlayerStats([])
+        setIsLoadingSquadStats(false)
+        return
+      }
+
+      const playerIds = [...new Set(squadMembers.map(m => m.user_id))]
+
+      // Step 3: Get profiles
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, avatar_url, handicap_index')
+        .in('id', playerIds)
+
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError)
+        setSquadError('Failed to load player profiles')
+        setIsLoadingSquadStats(false)
+        return
+      }
+
+      // Step 4: Get rounds with course details
+      const { data: rounds, error: roundsError } = await supabase
+        .from('rounds')
+        .select('*, weather_conditions, courses(name, par, course_type)')
+        .in('user_id', playerIds)
+        .order('date_of_round', { ascending: false })
+
+      if (roundsError) {
+        console.error('Error fetching rounds:', roundsError)
+        setSquadError('Failed to load round data')
+        setIsLoadingSquadStats(false)
+        return
+      }
+
+      // Step 5: Build player stats
+      const playerStatsMap = new Map<string, PlayerStats>()
+
+      profiles?.forEach(profile => {
+        playerStatsMap.set(profile.id, {
+          userId: profile.id,
+          fullName: profile.full_name || 'Unknown Player',
+          avatarUrl: profile.avatar_url,
+          handicapIndex: profile.handicap_index,
+          totalRounds: 0,
+          averageScore: null,
+          bestScore: null,
+          lastRoundScore: null,
+          lastRoundDate: null,
+          rounds: [],
+        })
       })
-      return
+
+      const roundsByPlayer = new Map<string, RoundDetail[]>()
+
+      rounds?.forEach(round => {
+        if (round.total_strokes && round.total_strokes > 0) {
+          if (!roundsByPlayer.has(round.user_id)) {
+            roundsByPlayer.set(round.user_id, [])
+          }
+
+          const courseData = round.courses as { name: string; par: number; course_type: string | null } | null
+
+          roundsByPlayer.get(round.user_id)!.push({
+            id: round.id,
+            dateOfRound: round.date_of_round,
+            totalStrokes: round.total_strokes,
+            handicapDifferential: round.handicap_differential,
+            weatherConditions: round.weather_conditions,
+            courseType: courseData?.course_type || null,
+            courseName: courseData?.name || null,
+            coursePar: courseData?.par || null,
+          })
+        }
+      })
+
+      roundsByPlayer.forEach((playerRounds, playerId) => {
+        const stats = playerStatsMap.get(playerId)
+        if (stats && playerRounds.length > 0) {
+          const scores = playerRounds.map(r => r.totalStrokes)
+          stats.totalRounds = playerRounds.length
+          stats.averageScore = Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
+          stats.bestScore = Math.min(...scores)
+          stats.lastRoundScore = playerRounds[0].totalStrokes
+          stats.lastRoundDate = playerRounds[0].dateOfRound
+          stats.rounds = playerRounds
+        }
+      })
+
+      const playerStatsArray = Array.from(playerStatsMap.values())
+        .sort((a, b) => {
+          if (a.totalRounds === 0 && b.totalRounds > 0) return 1
+          if (a.totalRounds > 0 && b.totalRounds === 0) return -1
+          if (a.averageScore === null && b.averageScore === null) return 0
+          if (a.averageScore === null) return 1
+          if (b.averageScore === null) return -1
+          return a.averageScore - b.averageScore
+        })
+
+      setSquadPlayerStats(playerStatsArray)
+
+    } catch (err) {
+      console.error('Squad insights error:', err)
+      setSquadError('An unexpected error occurred')
+    } finally {
+      setIsLoadingSquadStats(false)
     }
-
-    const scores = validRounds.map(r => r.total_strokes!)
-    const avgScore = scores.reduce((sum, s) => sum + s, 0) / scores.length
-    const bestScore = Math.min(...scores)
-    const worstScore = Math.max(...scores)
-
-    // Calculate trend (comparing first half vs second half of rounds)
-    let trend: 'improving' | 'declining' | 'stable' | null = null
-    if (validRounds.length >= 4) {
-      const half = Math.floor(validRounds.length / 2)
-      const recentScores = scores.slice(0, half)
-      const olderScores = scores.slice(half)
-      const recentAvg = recentScores.reduce((a, b) => a + b, 0) / recentScores.length
-      const olderAvg = olderScores.reduce((a, b) => a + b, 0) / olderScores.length
-
-      if (recentAvg < olderAvg - 2) trend = 'improving'
-      else if (recentAvg > olderAvg + 2) trend = 'declining'
-      else trend = 'stable'
-    }
-
-    setStats({
-      averageScore: avgScore,
-      bestScore,
-      worstScore,
-      totalRounds: validRounds.length,
-      trend,
-    })
   }
 
-  const calculateCoursePerformance = (roundsData: Round[]) => {
-    const validRounds = roundsData.filter(
-      r => r.total_strokes !== null && r.total_strokes > 0 && r.courses?.name
-    )
+  // ============================================
+  // COMPUTED DATA FOR CHARTS
+  // ============================================
 
-    // Group rounds by course name
-    const courseMap = new Map<string, number[]>()
-    validRounds.forEach(r => {
-      const courseName = r.courses.name
-      const existing = courseMap.get(courseName) || []
-      existing.push(r.total_strokes!)
-      courseMap.set(courseName, existing)
+  const filteredPlayerStats = useMemo(() => {
+    return squadPlayerStats.map(player => {
+      const filteredRounds = filterRoundsByTimeframe(player.rounds, timeframeFilter)
+      const scores = filteredRounds.map(r => r.totalStrokes)
+      return {
+        ...player,
+        rounds: filteredRounds,
+        totalRounds: filteredRounds.length,
+        averageScore: scores.length > 0
+          ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
+          : null,
+        bestScore: scores.length > 0 ? Math.min(...scores) : null,
+      }
+    })
+  }, [squadPlayerStats, timeframeFilter])
+
+  // Summary stats
+  const summaryStats = useMemo(() => {
+    const totalPlayers = filteredPlayerStats.length
+    const activePlayers = filteredPlayerStats.filter(p => isActivePlayer(p.rounds)).length
+    const playersWithRounds = filteredPlayerStats.filter(p => p.averageScore !== null)
+    const squadAvgScore = playersWithRounds.length > 0
+      ? Math.round((playersWithRounds.reduce((sum, p) => sum + (p.averageScore || 0), 0) / playersWithRounds.length) * 10) / 10
+      : null
+    const totalRounds = filteredPlayerStats.reduce((sum, p) => sum + p.totalRounds, 0)
+
+    return { totalPlayers, activePlayers, squadAvgScore, totalRounds }
+  }, [filteredPlayerStats])
+
+  // Bar chart data: Player avg scores
+  const avgScoreChartData = useMemo(() => {
+    return filteredPlayerStats
+      .filter(p => p.averageScore !== null)
+      .slice(0, 10)
+      .map(p => ({
+        name: p.fullName.split(' ')[0],
+        fullName: p.fullName,
+        avgScore: p.averageScore,
+      }))
+      .reverse()
+  }, [filteredPlayerStats])
+
+  // Line chart data: Handicap trends over 3 months
+  const handicapTrendData = useMemo(() => {
+    const threeMonthsAgo = new Date()
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+
+    // Get players with handicap data
+    const playersWithHandicap = filteredPlayerStats
+      .filter(p => p.rounds.some(r => r.handicapDifferential !== null))
+      .slice(0, 5)
+
+    if (playersWithHandicap.length === 0) return []
+
+    // Create monthly buckets
+    const months: string[] = []
+    for (let i = 2; i >= 0; i--) {
+      const d = new Date()
+      d.setMonth(d.getMonth() - i)
+      months.push(d.toLocaleDateString('en-IE', { month: 'short' }))
+    }
+
+    return months.map((month, idx) => {
+      const dataPoint: Record<string, string | number | null> = { month }
+      const targetDate = new Date()
+      targetDate.setMonth(targetDate.getMonth() - (2 - idx))
+
+      playersWithHandicap.forEach(player => {
+        const monthRounds = player.rounds.filter(r => {
+          const roundDate = new Date(r.dateOfRound)
+          return roundDate.getMonth() === targetDate.getMonth() &&
+                 roundDate.getFullYear() === targetDate.getFullYear() &&
+                 r.handicapDifferential !== null
+        })
+
+        if (monthRounds.length > 0) {
+          const avgHandicap = monthRounds.reduce((sum, r) => sum + (r.handicapDifferential || 0), 0) / monthRounds.length
+          dataPoint[player.fullName] = Math.round(avgHandicap * 10) / 10
+        } else {
+          dataPoint[player.fullName] = null
+        }
+      })
+
+      return dataPoint
+    })
+  }, [filteredPlayerStats])
+
+  const handicapPlayers = useMemo(() => {
+    return filteredPlayerStats
+      .filter(p => p.rounds.some(r => r.handicapDifferential !== null))
+      .slice(0, 5)
+      .map(p => p.fullName)
+  }, [filteredPlayerStats])
+
+  // Stacked bar data: Rounds by course type
+  const courseTypeData = useMemo(() => {
+    const typeCountsByPlayer: Record<string, Record<string, number>> = {}
+
+    filteredPlayerStats.forEach(player => {
+      if (player.rounds.length > 0) {
+        const firstName = player.fullName.split(' ')[0]
+        typeCountsByPlayer[firstName] = {}
+
+        player.rounds.forEach(round => {
+          const type = round.courseType || 'Unknown'
+          typeCountsByPlayer[firstName][type] = (typeCountsByPlayer[firstName][type] || 0) + 1
+        })
+      }
     })
 
-    // Calculate average for each course
-    const coursePerformance = Array.from(courseMap.entries())
-      .map(([courseName, scores]) => ({
-        courseName,
-        avgScore: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10,
+    return Object.entries(typeCountsByPlayer)
+      .slice(0, 8)
+      .map(([name, types]) => ({
+        name,
+        ...types,
       }))
-      .sort((a, b) => a.avgScore - b.avgScore)
+  }, [filteredPlayerStats])
 
-    setCourseData(coursePerformance)
+  const allCourseTypes = useMemo(() => {
+    const types = new Set<string>()
+    filteredPlayerStats.forEach(p => {
+      p.rounds.forEach(r => {
+        types.add(r.courseType || 'Unknown')
+      })
+    })
+    return Array.from(types)
+  }, [filteredPlayerStats])
+
+  // Radar chart data: Weather performance
+  const weatherRadarData = useMemo(() => {
+    const weatherScores: Record<string, { total: number; count: number }> = {
+      Sun: { total: 0, count: 0 },
+      Cloud: { total: 0, count: 0 },
+      Rain: { total: 0, count: 0 },
+      Wind: { total: 0, count: 0 },
+    }
+
+    filteredPlayerStats.forEach(player => {
+      player.rounds.forEach(round => {
+        const weather = normalizeWeather(round.weatherConditions)
+        if (weatherScores[weather]) {
+          weatherScores[weather].total += round.totalStrokes
+          weatherScores[weather].count += 1
+        }
+      })
+    })
+
+    return Object.entries(weatherScores).map(([weather, data]) => ({
+      weather,
+      avgScore: data.count > 0 ? Math.round((data.total / data.count) * 10) / 10 : 0,
+      rounds: data.count,
+    }))
+  }, [filteredPlayerStats])
+
+  // Leaderboard data
+  const leaderboardData = useMemo(() => {
+    const byAvgScore = [...filteredPlayerStats]
+      .filter(p => p.averageScore !== null)
+      .sort((a, b) => (a.averageScore || 999) - (b.averageScore || 999))
+      .slice(0, 3)
+
+    const byHandicap = [...filteredPlayerStats]
+      .filter(p => p.handicapIndex !== null)
+      .sort((a, b) => (a.handicapIndex || 999) - (b.handicapIndex || 999))
+      .slice(0, 3)
+
+    return { byAvgScore, byHandicap }
+  }, [filteredPlayerStats])
+
+  // ============================================
+  // RENDER HELPERS
+  // ============================================
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2)
   }
 
   // ============================================
@@ -181,9 +548,9 @@ export default function StatsPage() {
         <div className="text-center">
           <div
             className="w-10 h-10 border-4 border-white/20 rounded-full animate-spin mx-auto mb-4"
-            style={{ borderTopColor: '#C9A227' }}
+            style={{ borderTopColor: PGC_GOLD }}
           />
-          <p className="text-white/60">Loading statistics...</p>
+          <p className="text-white/60">Checking permissions...</p>
         </div>
       </div>
     )
@@ -194,254 +561,497 @@ export default function StatsPage() {
   // ============================================
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold" style={{ color: '#C9A227' }}>
-          Statistics
-        </h1>
-        <p className="text-white/60 mt-1">Your performance analysis</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold" style={{ color: PGC_GOLD }}>
+            Squad Insights
+          </h1>
+          <p className="text-white/60 mt-1">Performance analytics for your squads</p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Admin Badge */}
+          <div
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm"
+            style={{ backgroundColor: `${PGC_GOLD}20`, color: PGC_GOLD }}
+          >
+            <Shield className="w-4 h-4" />
+            Admin
+          </div>
+
+          {/* Timeframe Filter */}
+          <div className="relative">
+            <select
+              value={timeframeFilter}
+              onChange={(e) => setTimeframeFilter(e.target.value as TimeframeFilter)}
+              className="appearance-none px-4 py-2 pr-10 rounded-lg text-sm font-medium text-white cursor-pointer focus:outline-none focus:ring-2"
+              style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                borderColor: PGC_GOLD,
+                border: '1px solid rgba(201, 162, 39, 0.3)',
+              }}
+            >
+              <option value="all" style={{ backgroundColor: PGC_DARK_GREEN }}>All Time</option>
+              <option value="3months" style={{ backgroundColor: PGC_DARK_GREEN }}>Last 3 Months</option>
+              <option value="ytd" style={{ backgroundColor: PGC_DARK_GREEN }}>Year to Date</option>
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60 pointer-events-none" />
+          </div>
+        </div>
       </div>
 
       {/* Error Message */}
-      {error && (
+      {squadError && (
         <div
-          className="p-4 rounded-xl flex items-start gap-3"
+          className="p-4 rounded-xl"
           style={{
             backgroundColor: 'rgba(239, 68, 68, 0.2)',
             border: '1px solid rgba(239, 68, 68, 0.5)',
           }}
         >
-          <span className="text-red-200 text-sm">{error}</span>
+          <span className="text-red-200 text-sm">{squadError}</span>
         </div>
       )}
 
-      {/* Course Performance Chart */}
-      {courseData.length > 0 && (
-        <div className="glass-card p-6">
-          <h2 className="text-lg font-semibold mb-4" style={{ color: '#C9A227' }}>
-            Performance by Venue
-          </h2>
-          <CoursePerformanceChart data={courseData} />
+      {/* Loading State */}
+      {isLoadingSquadStats ? (
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div
+              className="w-10 h-10 border-4 border-white/20 rounded-full animate-spin mx-auto mb-4"
+              style={{ borderTopColor: PGC_GOLD }}
+            />
+            <p className="text-white/60">Loading squad insights...</p>
+          </div>
         </div>
-      )}
-
-      {rounds.length === 0 ? (
-        /* Empty State */
+      ) : squadPlayerStats.length === 0 ? (
         <div className="glass-card p-8 text-center">
           <div
             className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
             style={{ backgroundColor: 'rgba(201, 162, 39, 0.2)' }}
           >
-            <BarChart3 className="w-8 h-8" style={{ color: '#C9A227' }} />
+            <Users className="w-8 h-8" style={{ color: PGC_GOLD }} />
           </div>
-          <h3 className="text-xl font-bold text-white mb-2">No Data Yet</h3>
-          <p className="text-white/60 mb-6 max-w-md mx-auto">
-            Add some rounds to start seeing your performance statistics.
+          <h3 className="text-xl font-bold text-white mb-2">No Squad Data</h3>
+          <p className="text-white/60 mb-4 max-w-md mx-auto">
+            You don&apos;t have any squads assigned yet, or the assigned squads have no members.
           </p>
-          <Link
-            href="/dashboard/add-round"
-            className="btn-gold inline-flex items-center gap-2"
-          >
-            <PlusCircle className="w-5 h-5" />
-            Add Your First Round
-          </Link>
         </div>
       ) : (
         <>
-          {/* Performance Highlights */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Average Score */}
-            <div className="glass-card p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-white/60 font-medium">Average Score</p>
-                <Target className="w-5 h-5" style={{ color: '#C9A227' }} />
+          {/* ============================================ */}
+          {/* TOP-LEVEL SUMMARY CARDS */}
+          {/* ============================================ */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="glass-card p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(201, 162, 39, 0.2)' }}
+                >
+                  <Users className="w-5 h-5" style={{ color: PGC_GOLD }} />
+                </div>
+                <span className="text-white/60 text-sm">Total Players</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{summaryStats.totalPlayers}</p>
+            </div>
+
+            <div className="glass-card p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)' }}
+                >
+                  <Activity className="w-5 h-5 text-green-400" />
+                </div>
+                <span className="text-white/60 text-sm">Active (30d)</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{summaryStats.activePlayers}</p>
+            </div>
+
+            <div className="glass-card p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(147, 51, 234, 0.2)' }}
+                >
+                  <Target className="w-5 h-5 text-purple-400" />
+                </div>
+                <span className="text-white/60 text-sm">Squad Avg</span>
               </div>
               <p className="text-3xl font-bold text-white">
-                {stats.averageScore !== null ? stats.averageScore.toFixed(1) : '—'}
-              </p>
-              <p className="text-xs text-white/40 mt-1">
-                Based on {stats.totalRounds} rounds
+                {summaryStats.squadAvgScore ?? '—'}
               </p>
             </div>
 
-            {/* Best Score */}
-            <div className="glass-card p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-white/60 font-medium">Best Score</p>
-                <TrendingDown className="w-5 h-5 text-green-400" />
+            <div className="glass-card p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ backgroundColor: 'rgba(59, 130, 246, 0.2)' }}
+                >
+                  <Calendar className="w-5 h-5 text-blue-400" />
+                </div>
+                <span className="text-white/60 text-sm">Total Rounds</span>
               </div>
-              <p className="text-3xl font-bold text-green-400">
-                {stats.bestScore !== null ? stats.bestScore : '—'}
-              </p>
-              <p className="text-xs text-white/40 mt-1">Personal best</p>
-            </div>
-
-            {/* Worst Score */}
-            <div className="glass-card p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-white/60 font-medium">Worst Score</p>
-                <TrendingUp className="w-5 h-5 text-red-400" />
-              </div>
-              <p className="text-3xl font-bold text-red-400">
-                {stats.worstScore !== null ? stats.worstScore : '—'}
-              </p>
-              <p className="text-xs text-white/40 mt-1">Room to improve</p>
-            </div>
-
-            {/* Trend */}
-            <div className="glass-card p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-white/60 font-medium">Trend</p>
-                <BarChart3 className="w-5 h-5" style={{ color: '#C9A227' }} />
-              </div>
-              <p className={`text-3xl font-bold ${
-                stats.trend === 'improving' ? 'text-green-400' :
-                stats.trend === 'declining' ? 'text-red-400' :
-                'text-white'
-              }`}>
-                {stats.trend === 'improving' ? 'Improving' :
-                 stats.trend === 'declining' ? 'Declining' :
-                 stats.trend === 'stable' ? 'Stable' : '—'}
-              </p>
-              <p className="text-xs text-white/40 mt-1">Recent vs older rounds</p>
+              <p className="text-3xl font-bold text-white">{summaryStats.totalRounds}</p>
             </div>
           </div>
 
-          {/* Round History */}
-          <div className="glass-card overflow-hidden">
-            <div
-              className="px-6 py-4 flex items-center justify-between"
-              style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.3)' }}
-            >
-              <h2 className="text-lg font-semibold" style={{ color: '#C9A227' }}>
-                Round History
-              </h2>
-              <span className="text-sm text-white/40">{rounds.length} rounds</span>
+          {/* ============================================ */}
+          {/* PERFORMANCE COMPARISON (MIDDLE ROW) */}
+          {/* ============================================ */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Avg Score Bar Chart */}
+            <div className="glass-card p-5">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
+                Avg Score by Player
+              </h3>
+              {avgScoreChartData.length > 0 ? (
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={avgScoreChartData}
+                      layout="vertical"
+                      margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis
+                        type="number"
+                        domain={['dataMin - 5', 'dataMax + 5']}
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 11 }}
+                        width={50}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: PGC_DARK_GREEN,
+                          border: `1px solid ${PGC_GOLD}`,
+                          borderRadius: '8px',
+                        }}
+                        labelStyle={{ color: PGC_GOLD }}
+                        itemStyle={{ color: 'white' }}
+                        formatter={(value: number, name: string, props: any) => [
+                          value,
+                          props.payload.fullName
+                        ]}
+                      />
+                      {summaryStats.squadAvgScore && (
+                        <ReferenceLine
+                          x={summaryStats.squadAvgScore}
+                          stroke={PGC_GOLD}
+                          strokeDasharray="5 5"
+                          label={{
+                            value: 'Squad Avg',
+                            fill: PGC_GOLD,
+                            fontSize: 10,
+                            position: 'top',
+                          }}
+                        />
+                      )}
+                      <Bar dataKey="avgScore" radius={[0, 4, 4, 0]}>
+                        {avgScoreChartData.map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={CHART_COLORS[index % CHART_COLORS.length]}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  No score data available
+                </div>
+              )}
             </div>
 
-            {/* Desktop Table */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr style={{ backgroundColor: 'rgba(201, 162, 39, 0.15)' }}>
-                    <th className="py-3 px-6 text-left text-xs font-semibold uppercase" style={{ color: '#C9A227' }}>
-                      Date
-                    </th>
-                    <th className="py-3 px-6 text-left text-xs font-semibold uppercase" style={{ color: '#C9A227' }}>
-                      Course
-                    </th>
-                    <th className="py-3 px-6 text-center text-xs font-semibold uppercase" style={{ color: '#C9A227' }}>
-                      Weather
-                    </th>
-                    <th className="py-3 px-6 text-center text-xs font-semibold uppercase" style={{ color: '#C9A227' }}>
-                      Score
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rounds.map((round) => (
-                    <tr
-                      key={round.id}
-                      className="hover:bg-white/5 transition-colors"
-                      style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.1)' }}
+            {/* Handicap Trend Line Chart */}
+            <div className="glass-card p-5">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
+                Handicap Trend (3 Months)
+              </h3>
+              {handicapTrendData.length > 0 && handicapPlayers.length > 0 ? (
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={handicapTrendData}
+                      margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
                     >
-                      <td className="py-4 px-6 text-sm text-white/70">
-                        {new Date(round.date_of_round).toLocaleDateString('en-IE', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
-                      </td>
-                      <td className="py-4 px-6 text-sm font-medium text-white">
-                        {round.courses?.name || 'Unknown Course'}
-                      </td>
-                      <td className="py-4 px-6">
-                        <div className="flex items-center justify-center gap-2">
-                          {getWeatherIcon(round.weather)}
-                          <div className="text-center">
-                            <span className="text-xs text-white/70">{round.weather || '—'}</span>
-                            {(round.temp_c !== null || round.wind_speed_kph !== null) && (
-                              <div className="flex items-center justify-center gap-2 text-xs text-white/50">
-                                {round.temp_c !== null && (
-                                  <span className="flex items-center gap-0.5">
-                                    <Thermometer className="w-3 h-3" />
-                                    {round.temp_c}°
-                                  </span>
-                                )}
-                                {round.wind_speed_kph !== null && (
-                                  <span className="flex items-center gap-0.5">
-                                    <Wind className="w-3 h-3" />
-                                    {round.wind_speed_kph}kph
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-4 px-6 text-center">
-                        <span
-                          className="inline-flex items-center justify-center w-12 h-8 rounded-lg font-bold text-sm"
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis
+                        dataKey="month"
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
+                      />
+                      <YAxis
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
+                        domain={['auto', 'auto']}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: PGC_DARK_GREEN,
+                          border: `1px solid ${PGC_GOLD}`,
+                          borderRadius: '8px',
+                        }}
+                        labelStyle={{ color: PGC_GOLD }}
+                        itemStyle={{ color: 'white' }}
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: '11px' }}
+                        formatter={(value) => (
+                          <span style={{ color: 'rgba(255,255,255,0.8)' }}>
+                            {value.split(' ')[0]}
+                          </span>
+                        )}
+                      />
+                      {handicapPlayers.map((player, idx) => (
+                        <Line
+                          key={player}
+                          type="monotone"
+                          dataKey={player}
+                          stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                          strokeWidth={2}
+                          dot={{ r: 4, fill: CHART_COLORS[idx % CHART_COLORS.length] }}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  No handicap data available
+                </div>
+              )}
+            </div>
+
+            {/* Rounds by Course Type Stacked Bar */}
+            <div className="glass-card p-5">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
+                Rounds by Course Type
+              </h3>
+              {courseTypeData.length > 0 ? (
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={courseTypeData}
+                      margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis
+                        dataKey="name"
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
+                      />
+                      <YAxis
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: PGC_DARK_GREEN,
+                          border: `1px solid ${PGC_GOLD}`,
+                          borderRadius: '8px',
+                        }}
+                        labelStyle={{ color: PGC_GOLD }}
+                        itemStyle={{ color: 'white' }}
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: '11px' }}
+                        formatter={(value) => (
+                          <span style={{ color: 'rgba(255,255,255,0.8)' }}>{value}</span>
+                        )}
+                      />
+                      {allCourseTypes.map((type) => (
+                        <Bar
+                          key={type}
+                          dataKey={type}
+                          stackId="a"
+                          fill={COURSE_TYPE_COLORS[type] || '#6B7280'}
+                          radius={[0, 0, 0, 0]}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[280px] flex items-center justify-center text-white/40">
+                  No course data available
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ============================================ */}
+          {/* DEEP INSIGHTS (BOTTOM ROW) */}
+          {/* ============================================ */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Weather Radar Chart */}
+            <div className="glass-card p-5">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
+                Performance by Weather
+              </h3>
+              {weatherRadarData.some(d => d.rounds > 0) ? (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RadarChart data={weatherRadarData} cx="50%" cy="50%" outerRadius="70%">
+                      <PolarGrid stroke="rgba(255,255,255,0.2)" />
+                      <PolarAngleAxis
+                        dataKey="weather"
+                        tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }}
+                      />
+                      <PolarRadiusAxis
+                        angle={90}
+                        domain={[0, 'auto']}
+                        tick={{ fill: 'rgba(255,255,255,0.5)', fontSize: 10 }}
+                      />
+                      <Radar
+                        name="Avg Score"
+                        dataKey="avgScore"
+                        stroke={PGC_GOLD}
+                        fill={PGC_GOLD}
+                        fillOpacity={0.4}
+                        strokeWidth={2}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: PGC_DARK_GREEN,
+                          border: `1px solid ${PGC_GOLD}`,
+                          borderRadius: '8px',
+                        }}
+                        labelStyle={{ color: PGC_GOLD }}
+                        formatter={(value: number, name: string, props: any) => [
+                          `${value} (${props.payload.rounds} rounds)`,
+                          'Avg Score'
+                        ]}
+                      />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-white/40">
+                  No weather data available
+                </div>
+              )}
+            </div>
+
+            {/* Leaderboard Tables */}
+            <div className="glass-card p-5">
+              <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
+                Leaderboard
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Best Avg Score */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Trophy className="w-4 h-4 text-yellow-400" />
+                    <span className="text-sm font-medium text-white/80">Best Avg Score</span>
+                  </div>
+                  <div className="space-y-2">
+                    {leaderboardData.byAvgScore.map((player, idx) => (
+                      <div
+                        key={player.userId}
+                        className="flex items-center gap-3 p-2 rounded-lg"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
+                      >
+                        <div
+                          className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
                           style={{
-                            backgroundColor: 'rgba(201, 162, 39, 0.2)',
-                            color: '#C9A227',
+                            backgroundColor: idx === 0 ? PGC_GOLD : idx === 1 ? '#94A3B8' : '#CD7F32',
+                            color: PGC_DARK_GREEN,
                           }}
                         >
-                          {round.total_strokes ?? '—'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile Cards */}
-            <div className="md:hidden divide-y" style={{ borderColor: 'rgba(201, 162, 39, 0.2)' }}>
-              {rounds.map((round) => (
-                <div key={round.id} className="p-4">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <p className="font-medium text-white">
-                        {round.courses?.name || 'Unknown Course'}
-                      </p>
-                      <p className="text-sm text-white/50">
-                        {new Date(round.date_of_round).toLocaleDateString('en-IE', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
-                      </p>
-                      {/* Weather info for mobile */}
-                      {(round.weather || round.temp_c !== null || round.wind_speed_kph !== null) && (
-                        <div className="flex items-center gap-2 mt-1 text-xs text-white/50">
-                          {getWeatherIcon(round.weather)}
-                          <span>{round.weather || ''}</span>
-                          {round.temp_c !== null && (
-                            <span className="flex items-center gap-0.5">
-                              <Thermometer className="w-3 h-3" />
-                              {round.temp_c}°
-                            </span>
-                          )}
-                          {round.wind_speed_kph !== null && (
-                            <span className="flex items-center gap-0.5">
-                              <Wind className="w-3 h-3" />
-                              {round.wind_speed_kph}kph
-                            </span>
-                          )}
+                          {idx + 1}
                         </div>
-                      )}
-                    </div>
-                    <span
-                      className="text-2xl font-bold ml-4"
-                      style={{ color: '#C9A227' }}
-                    >
-                      {round.total_strokes ?? '—'}
-                    </span>
+                        {player.avatarUrl ? (
+                          <img
+                            src={player.avatarUrl}
+                            alt={player.fullName}
+                            className="w-8 h-8 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
+                            style={{ backgroundColor: `${PGC_GOLD}40`, color: PGC_GOLD }}
+                          >
+                            {getInitials(player.fullName)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white truncate">{player.fullName}</p>
+                        </div>
+                        <span className="text-sm font-bold" style={{ color: PGC_GOLD }}>
+                          {player.averageScore}
+                        </span>
+                      </div>
+                    ))}
+                    {leaderboardData.byAvgScore.length === 0 && (
+                      <p className="text-white/40 text-sm">No data</p>
+                    )}
                   </div>
                 </div>
-              ))}
+
+                {/* Lowest Handicap */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <TrendingUp className="w-4 h-4 text-green-400" />
+                    <span className="text-sm font-medium text-white/80">Lowest Handicap</span>
+                  </div>
+                  <div className="space-y-2">
+                    {leaderboardData.byHandicap.map((player, idx) => (
+                      <div
+                        key={player.userId}
+                        className="flex items-center gap-3 p-2 rounded-lg"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
+                      >
+                        <div
+                          className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{
+                            backgroundColor: idx === 0 ? PGC_GOLD : idx === 1 ? '#94A3B8' : '#CD7F32',
+                            color: PGC_DARK_GREEN,
+                          }}
+                        >
+                          {idx + 1}
+                        </div>
+                        {player.avatarUrl ? (
+                          <img
+                            src={player.avatarUrl}
+                            alt={player.fullName}
+                            className="w-8 h-8 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
+                            style={{ backgroundColor: `${PGC_GOLD}40`, color: PGC_GOLD }}
+                          >
+                            {getInitials(player.fullName)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white truncate">{player.fullName}</p>
+                        </div>
+                        <span className="text-sm font-bold text-green-400">
+                          {player.handicapIndex?.toFixed(1)}
+                        </span>
+                      </div>
+                    ))}
+                    {leaderboardData.byHandicap.length === 0 && (
+                      <p className="text-white/40 text-sm">No data</p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </>

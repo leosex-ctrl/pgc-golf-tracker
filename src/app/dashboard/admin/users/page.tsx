@@ -18,6 +18,8 @@ import {
   UserCog,
   AlertTriangle,
   X,
+  Link2,
+  Check,
 } from 'lucide-react'
 import {
   approveUser,
@@ -41,7 +43,19 @@ interface UserProfile {
   created_at: string
 }
 
-type TabType = 'pending' | 'all'
+interface Squad {
+  id: string
+  name: string
+  description: string | null
+}
+
+interface AdminSquad {
+  id: string
+  admin_id: string
+  squad_id: string
+}
+
+type TabType = 'pending' | 'all' | 'squad-linker'
 
 // ============================================
 // CONSTANTS - PGC Corporate Theme
@@ -78,6 +92,12 @@ export default function AdminUsersPage() {
     userId: string
     userName: string
   } | null>(null)
+
+  // Squad Linker State
+  const [squads, setSquads] = useState<Squad[]>([])
+  const [adminSquads, setAdminSquads] = useState<AdminSquad[]>([])
+  const [selectedAdmin, setSelectedAdmin] = useState<UserProfile | null>(null)
+  const [squadLinkLoading, setSquadLinkLoading] = useState<string | null>(null)
 
   useEffect(() => {
     checkAccessAndFetchData()
@@ -141,6 +161,29 @@ export default function AdminUsersPage() {
         console.error('Users fetch error:', JSON.stringify(usersError, null, 2))
       } else {
         setUsers(usersData || [])
+      }
+
+      // Fetch all squads (for Squad Linker)
+      const { data: squadsData, error: squadsError } = await supabase
+        .from('squads')
+        .select('id, name, description')
+        .order('name')
+
+      if (squadsError) {
+        console.error('Squads fetch error:', JSON.stringify(squadsError, null, 2))
+      } else {
+        setSquads(squadsData || [])
+      }
+
+      // Fetch all admin_squads associations
+      const { data: adminSquadsData, error: adminSquadsError } = await supabase
+        .from('admin_squads')
+        .select('id, admin_id, squad_id')
+
+      if (adminSquadsError) {
+        console.error('Admin squads fetch error:', JSON.stringify(adminSquadsError, null, 2))
+      } else {
+        setAdminSquads(adminSquadsData || [])
       }
 
     } catch (err) {
@@ -267,11 +310,96 @@ export default function AdminUsersPage() {
   }
 
   // ============================================
+  // SQUAD LINKER HANDLERS
+  // ============================================
+
+  const handleSelectAdmin = (admin: UserProfile) => {
+    setSelectedAdmin(admin)
+  }
+
+  const isSquadAssigned = (squadId: string): boolean => {
+    if (!selectedAdmin) return false
+    return adminSquads.some(
+      (as) => as.admin_id === selectedAdmin.id && as.squad_id === squadId
+    )
+  }
+
+  const handleToggleSquad = async (squadId: string) => {
+    if (!selectedAdmin) return
+
+    setSquadLinkLoading(squadId)
+    setActionError(null)
+    setActionSuccess(null)
+
+    const supabase = createClient()
+    const isCurrentlyAssigned = isSquadAssigned(squadId)
+
+    try {
+      if (isCurrentlyAssigned) {
+        // Remove assignment
+        const { error } = await supabase
+          .from('admin_squads')
+          .delete()
+          .eq('admin_id', selectedAdmin.id)
+          .eq('squad_id', squadId)
+
+        if (error) {
+          console.error('Error removing squad assignment:', JSON.stringify(error, null, 2))
+          setActionError('Failed to remove squad assignment')
+        } else {
+          setActionSuccess('Squad assignment removed')
+          // Update local state
+          setAdminSquads((prev) =>
+            prev.filter(
+              (as) => !(as.admin_id === selectedAdmin.id && as.squad_id === squadId)
+            )
+          )
+        }
+      } else {
+        // Add assignment
+        const { data, error } = await supabase
+          .from('admin_squads')
+          .insert({
+            admin_id: selectedAdmin.id,
+            squad_id: squadId,
+          })
+          .select()
+          .single()
+
+        if (error) {
+          console.error('Error adding squad assignment:', JSON.stringify(error, null, 2))
+          setActionError('Failed to add squad assignment')
+        } else {
+          setActionSuccess('Squad assigned successfully')
+          // Update local state
+          setAdminSquads((prev) => [...prev, data])
+        }
+      }
+    } catch (err) {
+      console.error('Squad toggle error:', JSON.stringify(err, null, 2))
+      setActionError('An unexpected error occurred')
+    } finally {
+      setSquadLinkLoading(null)
+      setTimeout(() => setActionSuccess(null), 3000)
+    }
+  }
+
+  const getAdminAssignedSquadsCount = (adminId: string): number => {
+    return adminSquads.filter((as) => as.admin_id === adminId).length
+  }
+
+  // ============================================
   // FILTERED DATA
   // ============================================
 
   const pendingUsers = users.filter(u => u.approval_status?.toLowerCase() === 'pending')
   const displayUsers = activeTab === 'pending' ? pendingUsers : users
+
+  // Get all admins for Squad Linker (both Admin and Super Admin roles)
+  const adminUsers = users.filter((u) => {
+    const role = (u.role || '').toLowerCase().replace(/\s+/g, '_')
+    return role === 'admin' || role === 'super_admin'
+  })
 
   // ============================================
   // HELPERS
@@ -456,11 +584,216 @@ export default function AdminUsersPage() {
             <Users className="w-4 h-4" />
             All Users
           </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => setActiveTab('squad-linker')}
+              className={`flex-1 px-6 py-4 text-sm font-semibold transition-all flex items-center justify-center gap-2`}
+              style={{
+                backgroundColor: activeTab === 'squad-linker' ? `${PGC_GOLD}20` : 'transparent',
+                color: activeTab === 'squad-linker' ? PGC_GOLD : 'rgba(255,255,255,0.6)',
+                borderBottom: activeTab === 'squad-linker' ? `2px solid ${PGC_GOLD}` : '2px solid transparent',
+              }}
+            >
+              <Link2 className="w-4 h-4" />
+              Squad Linker
+            </button>
+          )}
         </div>
 
         {/* Content */}
         <div className="p-6">
-          {displayUsers.length === 0 ? (
+          {activeTab === 'squad-linker' ? (
+            // ============================================
+            // SQUAD LINKER VIEW
+            // ============================================
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Admin List */}
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                  <Shield className="w-5 h-5" style={{ color: PGC_GOLD }} />
+                  Select an Admin
+                </h3>
+                {adminUsers.length === 0 ? (
+                  <div
+                    className="text-center py-8 rounded-xl"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
+                  >
+                    <Shield className="w-12 h-12 mx-auto mb-3 text-white/30" />
+                    <p className="text-white/50">No admins found</p>
+                    <p className="text-sm text-white/30 mt-1">
+                      Promote users to Admin role first
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2">
+                    {adminUsers.map((admin) => {
+                      const assignedCount = getAdminAssignedSquadsCount(admin.id)
+                      const isSelected = selectedAdmin?.id === admin.id
+
+                      return (
+                        <button
+                          key={admin.id}
+                          onClick={() => handleSelectAdmin(admin)}
+                          className={`w-full p-4 rounded-xl text-left transition-all ${
+                            isSelected ? 'ring-2' : 'hover:bg-white/10'
+                          }`}
+                          style={{
+                            backgroundColor: isSelected
+                              ? `${PGC_GOLD}20`
+                              : 'rgba(255,255,255,0.05)',
+                            ringColor: isSelected ? PGC_GOLD : 'transparent',
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center font-bold flex-shrink-0"
+                              style={{
+                                backgroundColor: isSelected
+                                  ? PGC_GOLD
+                                  : `${PGC_GOLD}30`,
+                                color: isSelected ? PGC_DARK_GREEN : PGC_GOLD,
+                              }}
+                            >
+                              {admin.full_name?.charAt(0)?.toUpperCase() || '?'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-white truncate">
+                                {admin.full_name || 'Unknown'}
+                              </p>
+                              <p className="text-sm text-white/50 truncate">
+                                {admin.email}
+                              </p>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium"
+                                style={{
+                                  backgroundColor:
+                                    assignedCount > 0
+                                      ? `${PGC_GOLD}30`
+                                      : 'rgba(255,255,255,0.1)',
+                                  color:
+                                    assignedCount > 0 ? PGC_GOLD : 'rgba(255,255,255,0.5)',
+                                }}
+                              >
+                                {assignedCount} squad{assignedCount !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Squad Assignment */}
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                  <Users className="w-5 h-5" style={{ color: PGC_GOLD }} />
+                  Assign Squads
+                </h3>
+                {!selectedAdmin ? (
+                  <div
+                    className="text-center py-8 rounded-xl"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
+                  >
+                    <Link2 className="w-12 h-12 mx-auto mb-3 text-white/30" />
+                    <p className="text-white/50">Select an admin to manage squads</p>
+                  </div>
+                ) : squads.length === 0 ? (
+                  <div
+                    className="text-center py-8 rounded-xl"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
+                  >
+                    <Users className="w-12 h-12 mx-auto mb-3 text-white/30" />
+                    <p className="text-white/50">No squads available</p>
+                    <p className="text-sm text-white/30 mt-1">
+                      Create squads in the Squads section first
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      className="p-3 rounded-lg mb-4 flex items-center gap-3"
+                      style={{ backgroundColor: `${PGC_GOLD}15` }}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center font-bold flex-shrink-0"
+                        style={{ backgroundColor: PGC_GOLD, color: PGC_DARK_GREEN }}
+                      >
+                        {selectedAdmin.full_name?.charAt(0)?.toUpperCase() || '?'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-white truncate">
+                          {selectedAdmin.full_name}
+                        </p>
+                        <p className="text-xs text-white/50">
+                          Managing squad access
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-[420px] overflow-y-auto pr-2">
+                      {squads.map((squad) => {
+                        const isAssigned = isSquadAssigned(squad.id)
+                        const isLoading = squadLinkLoading === squad.id
+
+                        return (
+                          <button
+                            key={squad.id}
+                            onClick={() => handleToggleSquad(squad.id)}
+                            disabled={isLoading}
+                            className={`w-full p-4 rounded-xl text-left transition-all flex items-center gap-3 ${
+                              isLoading ? 'opacity-50' : 'hover:bg-white/10'
+                            }`}
+                            style={{
+                              backgroundColor: isAssigned
+                                ? 'rgba(34, 197, 94, 0.15)'
+                                : 'rgba(255,255,255,0.05)',
+                              border: isAssigned
+                                ? '1px solid rgba(34, 197, 94, 0.4)'
+                                : '1px solid transparent',
+                            }}
+                          >
+                            <div
+                              className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 transition-all ${
+                                isLoading ? 'animate-pulse' : ''
+                              }`}
+                              style={{
+                                backgroundColor: isAssigned
+                                  ? '#22C55E'
+                                  : 'rgba(255,255,255,0.1)',
+                                border: isAssigned
+                                  ? 'none'
+                                  : '2px solid rgba(255,255,255,0.3)',
+                              }}
+                            >
+                              {isLoading ? (
+                                <Loader2 className="w-4 h-4 text-white animate-spin" />
+                              ) : isAssigned ? (
+                                <Check className="w-4 h-4 text-white" />
+                              ) : null}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-white">
+                                {squad.name}
+                              </p>
+                              {squad.description && (
+                                <p className="text-sm text-white/50 truncate">
+                                  {squad.description}
+                                </p>
+                              )}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : displayUsers.length === 0 ? (
             <div className="text-center py-12">
               <div
                 className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"

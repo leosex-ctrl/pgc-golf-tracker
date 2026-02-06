@@ -68,14 +68,15 @@ const navItems: NavItem[] = [
     icon: MapPin,
   },
   {
-    label: 'Statistics',
-    href: '/dashboard/stats',
-    icon: BarChart3,
-  },
-  {
     label: 'My Statistics',
     href: '/dashboard/statistics',
     icon: Target,
+  },
+  {
+    label: 'Squad Insights',
+    href: '/dashboard/stats',
+    icon: BarChart3,
+    adminOnly: true,
   },
   {
     label: 'Reports',

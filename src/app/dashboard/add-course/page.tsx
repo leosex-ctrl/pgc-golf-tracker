@@ -29,6 +29,7 @@ export default function AddCoursePage() {
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
   const [teeColor, setTeeColor] = useState('White')
+  const [courseType, setCourseType] = useState('Parkland')
 
   // 18 holes - stored in course_holes table
   const [holes, setHoles] = useState<HoleInput[]>(
@@ -109,12 +110,14 @@ export default function AddCoursePage() {
 
       // ============================================
       // STEP 1: INSERT INTO courses TABLE
-      // STRICT SCHEMA: { name, location, tee_color }
+      // STRICT SCHEMA: { name, location, tee_color, par, course_type }
       // ============================================
       const courseData = {
         name: name.trim(),
         location: location.trim() || null,
         tee_color: teeColor.trim(),
+        par: totalPar,
+        course_type: courseType,
       }
 
       console.log('Inserting course:', JSON.stringify(courseData, null, 2))
@@ -252,13 +255,13 @@ export default function AddCoursePage() {
               </div>
             )}
 
-            {/* Course Details - ONLY name, location, tee_color */}
+            {/* Course Details */}
             <div className="space-y-4 mb-8">
               <h2 className="text-lg font-semibold" style={{ color: '#C9A227' }}>
                 Course Details
               </h2>
 
-              <div className="grid md:grid-cols-3 gap-4">
+              <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-white/80 mb-1">
                     Course Name <span className="text-red-400">*</span>
@@ -289,6 +292,24 @@ export default function AddCoursePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-white/80 mb-1">
+                    Course Type <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    value={courseType}
+                    onChange={(e) => setCourseType(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-white/10 text-white focus:outline-none focus:ring-2"
+                    style={{ border: '1px solid rgba(201, 162, 39, 0.5)', '--tw-ring-color': '#C9A227' } as React.CSSProperties}
+                  >
+                    <option value="Parkland" className="bg-[#1B4D3E] text-white">Parkland</option>
+                    <option value="Links" className="bg-[#1B4D3E] text-white">Links</option>
+                    <option value="Heathland" className="bg-[#1B4D3E] text-white">Heathland</option>
+                    <option value="Desert" className="bg-[#1B4D3E] text-white">Desert</option>
+                    <option value="Resort" className="bg-[#1B4D3E] text-white">Resort</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-white/80 mb-1">
                     Tee Color <span className="text-red-400">*</span>
                   </label>
                   <select
@@ -301,6 +322,7 @@ export default function AddCoursePage() {
                     <option value="Blue" className="bg-[#1B4D3E] text-white">Blue</option>
                     <option value="Yellow" className="bg-[#1B4D3E] text-white">Yellow</option>
                     <option value="Red" className="bg-[#1B4D3E] text-white">Red</option>
+                    <option value="Green" className="bg-[#1B4D3E] text-white">Green</option>
                     <option value="Championship" className="bg-[#1B4D3E] text-white">Championship</option>
                   </select>
                 </div>
