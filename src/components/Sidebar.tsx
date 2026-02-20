@@ -16,7 +16,8 @@ import {
   LogOut,
   UserCog,
   History,
-  MapPin
+  MapPin,
+  Settings
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
 
@@ -71,6 +72,11 @@ const navItems: NavItem[] = [
     label: 'My Statistics',
     href: '/dashboard/statistics',
     icon: Target,
+  },
+  {
+    label: 'My Profile',
+    href: '/dashboard/profile',
+    icon: Settings,
   },
   {
     label: 'Squad Insights',

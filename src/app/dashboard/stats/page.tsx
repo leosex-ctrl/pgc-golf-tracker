@@ -21,14 +21,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
   Legend,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
   ReferenceLine,
   Cell,
 } from 'recharts'
@@ -43,6 +36,7 @@ interface RoundDetail {
   totalStrokes: number
   handicapDifferential: number | null
   weatherConditions: string | null
+  windConditions: string | null
   courseType: string | null
   courseName: string | null
   coursePar: number | null
@@ -312,6 +306,7 @@ export default function SquadInsightsPage() {
             totalStrokes: round.total_strokes,
             handicapDifferential: round.handicap_differential,
             weatherConditions: round.weather_conditions,
+            windConditions: round.wind_conditions || null,
             courseType: courseData?.course_type || null,
             courseName: courseData?.name || null,
             coursePar: courseData?.par || null,
@@ -398,56 +393,31 @@ export default function SquadInsightsPage() {
       .reverse()
   }, [filteredPlayerStats])
 
-  // Line chart data: Handicap trends over 3 months
-  const handicapTrendData = useMemo(() => {
-    const threeMonthsAgo = new Date()
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+  // Bar chart data: Performance by wind strength
+  const windPerformanceData = useMemo(() => {
+    const windCategories = ['No Wind', '10kmph', '20kmph', '30kmph', '40kmph']
+    const windScores: Record<string, { total: number; count: number }> = {}
+    windCategories.forEach(cat => { windScores[cat] = { total: 0, count: 0 } })
 
-    // Get players with handicap data
-    const playersWithHandicap = filteredPlayerStats
-      .filter(p => p.rounds.some(r => r.handicapDifferential !== null))
-      .slice(0, 5)
-
-    if (playersWithHandicap.length === 0) return []
-
-    // Create monthly buckets
-    const months: string[] = []
-    for (let i = 2; i >= 0; i--) {
-      const d = new Date()
-      d.setMonth(d.getMonth() - i)
-      months.push(d.toLocaleDateString('en-IE', { month: 'short' }))
-    }
-
-    return months.map((month, idx) => {
-      const dataPoint: Record<string, string | number | null> = { month }
-      const targetDate = new Date()
-      targetDate.setMonth(targetDate.getMonth() - (2 - idx))
-
-      playersWithHandicap.forEach(player => {
-        const monthRounds = player.rounds.filter(r => {
-          const roundDate = new Date(r.dateOfRound)
-          return roundDate.getMonth() === targetDate.getMonth() &&
-                 roundDate.getFullYear() === targetDate.getFullYear() &&
-                 r.handicapDifferential !== null
-        })
-
-        if (monthRounds.length > 0) {
-          const avgHandicap = monthRounds.reduce((sum, r) => sum + (r.handicapDifferential || 0), 0) / monthRounds.length
-          dataPoint[player.fullName] = Math.round(avgHandicap * 10) / 10
-        } else {
-          dataPoint[player.fullName] = null
+    filteredPlayerStats.forEach(player => {
+      player.rounds.forEach(round => {
+        const wind = round.windConditions
+        if (wind && windScores[wind]) {
+          windScores[wind].total += round.totalStrokes
+          windScores[wind].count += 1
         }
       })
-
-      return dataPoint
     })
-  }, [filteredPlayerStats])
 
-  const handicapPlayers = useMemo(() => {
-    return filteredPlayerStats
-      .filter(p => p.rounds.some(r => r.handicapDifferential !== null))
-      .slice(0, 5)
-      .map(p => p.fullName)
+    return windCategories
+      .map(wind => ({
+        wind,
+        avgScore: windScores[wind].count > 0
+          ? Math.round((windScores[wind].total / windScores[wind].count) * 10) / 10
+          : 0,
+        rounds: windScores[wind].count,
+      }))
+      .filter(d => d.rounds > 0)
   }, [filteredPlayerStats])
 
   // Stacked bar data: Rounds by course type
@@ -484,8 +454,8 @@ export default function SquadInsightsPage() {
     return Array.from(types)
   }, [filteredPlayerStats])
 
-  // Radar chart data: Weather performance
-  const weatherRadarData = useMemo(() => {
+  // Bar chart data: Weather performance
+  const weatherBarData = useMemo(() => {
     const weatherScores: Record<string, { total: number; count: number }> = {
       Sun: { total: 0, count: 0 },
       Cloud: { total: 0, count: 0 },
@@ -503,11 +473,13 @@ export default function SquadInsightsPage() {
       })
     })
 
-    return Object.entries(weatherScores).map(([weather, data]) => ({
-      weather,
-      avgScore: data.count > 0 ? Math.round((data.total / data.count) * 10) / 10 : 0,
-      rounds: data.count,
-    }))
+    return Object.entries(weatherScores)
+      .map(([weather, data]) => ({
+        weather,
+        avgScore: data.count > 0 ? Math.round((data.total / data.count) * 10) / 10 : 0,
+        rounds: data.count,
+      }))
+      .filter(d => d.rounds > 0)
   }, [filteredPlayerStats])
 
   // Leaderboard data
@@ -775,28 +747,28 @@ export default function SquadInsightsPage() {
               )}
             </div>
 
-            {/* Handicap Trend Line Chart */}
+            {/* Performance by Wind Strength */}
             <div className="glass-card p-5">
               <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
-                Handicap Trend (3 Months)
+                Performance by Wind Strength
               </h3>
-              {handicapTrendData.length > 0 && handicapPlayers.length > 0 ? (
+              {windPerformanceData.length > 0 ? (
                 <div className="h-[280px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={handicapTrendData}
+                    <BarChart
+                      data={windPerformanceData}
                       margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                       <XAxis
-                        dataKey="month"
+                        dataKey="wind"
                         stroke="rgba(255,255,255,0.5)"
                         tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
                       />
                       <YAxis
                         stroke="rgba(255,255,255,0.5)"
                         tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
-                        domain={['auto', 'auto']}
+                        domain={[(dataMin: number) => Math.floor(dataMin - 5), (dataMax: number) => Math.ceil(dataMax + 5)]}
                       />
                       <Tooltip
                         contentStyle={{
@@ -806,32 +778,25 @@ export default function SquadInsightsPage() {
                         }}
                         labelStyle={{ color: PGC_GOLD }}
                         itemStyle={{ color: 'white' }}
+                        formatter={(value: number, _name: string, props: any) => [
+                          `${value} (${props.payload.rounds} rounds)`,
+                          'Avg Score'
+                        ]}
                       />
-                      <Legend
-                        wrapperStyle={{ fontSize: '11px' }}
-                        formatter={(value) => (
-                          <span style={{ color: 'rgba(255,255,255,0.8)' }}>
-                            {value.split(' ')[0]}
-                          </span>
-                        )}
-                      />
-                      {handicapPlayers.map((player, idx) => (
-                        <Line
-                          key={player}
-                          type="monotone"
-                          dataKey={player}
-                          stroke={CHART_COLORS[idx % CHART_COLORS.length]}
-                          strokeWidth={2}
-                          dot={{ r: 4, fill: CHART_COLORS[idx % CHART_COLORS.length] }}
-                          connectNulls
-                        />
-                      ))}
-                    </LineChart>
+                      <Bar dataKey="avgScore" radius={[4, 4, 0, 0]}>
+                        {windPerformanceData.map((_entry, index) => (
+                          <Cell
+                            key={`wind-${index}`}
+                            fill={CHART_COLORS[index % CHART_COLORS.length]}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               ) : (
                 <div className="h-[280px] flex items-center justify-center text-white/40">
-                  No handicap data available
+                  No wind data available
                 </div>
               )}
             </div>
@@ -897,32 +862,28 @@ export default function SquadInsightsPage() {
           {/* DEEP INSIGHTS (BOTTOM ROW) */}
           {/* ============================================ */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Weather Radar Chart */}
+            {/* Weather Bar Chart */}
             <div className="glass-card p-5">
               <h3 className="text-lg font-semibold mb-4" style={{ color: PGC_GOLD }}>
                 Performance by Weather
               </h3>
-              {weatherRadarData.some(d => d.rounds > 0) ? (
+              {weatherBarData.length > 0 ? (
                 <div className="h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <RadarChart data={weatherRadarData} cx="50%" cy="50%" outerRadius="70%">
-                      <PolarGrid stroke="rgba(255,255,255,0.2)" />
-                      <PolarAngleAxis
+                    <BarChart
+                      data={weatherBarData}
+                      margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis
                         dataKey="weather"
+                        stroke="rgba(255,255,255,0.5)"
                         tick={{ fill: 'rgba(255,255,255,0.8)', fontSize: 12 }}
                       />
-                      <PolarRadiusAxis
-                        angle={90}
-                        domain={[0, 'auto']}
-                        tick={{ fill: 'rgba(255,255,255,0.5)', fontSize: 10 }}
-                      />
-                      <Radar
-                        name="Avg Score"
-                        dataKey="avgScore"
-                        stroke={PGC_GOLD}
-                        fill={PGC_GOLD}
-                        fillOpacity={0.4}
-                        strokeWidth={2}
+                      <YAxis
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 11 }}
+                        domain={[(dataMin: number) => Math.floor(dataMin - 5), (dataMax: number) => Math.ceil(dataMax + 5)]}
                       />
                       <Tooltip
                         contentStyle={{
@@ -931,12 +892,29 @@ export default function SquadInsightsPage() {
                           borderRadius: '8px',
                         }}
                         labelStyle={{ color: PGC_GOLD }}
-                        formatter={(value: number, name: string, props: any) => [
+                        itemStyle={{ color: 'white' }}
+                        formatter={(value: number, _name: string, props: any) => [
                           `${value} (${props.payload.rounds} rounds)`,
                           'Avg Score'
                         ]}
                       />
-                    </RadarChart>
+                      <Bar dataKey="avgScore" radius={[4, 4, 0, 0]}>
+                        {weatherBarData.map((_entry, index) => {
+                          const weatherColors: Record<string, string> = {
+                            Sun: '#F59E0B',
+                            Cloud: '#94A3B8',
+                            Rain: '#3B82F6',
+                            Wind: '#22C55E',
+                          }
+                          return (
+                            <Cell
+                              key={`weather-${index}`}
+                              fill={weatherColors[weatherBarData[index].weather] || PGC_GOLD}
+                            />
+                          )
+                        })}
+                      </Bar>
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               ) : (

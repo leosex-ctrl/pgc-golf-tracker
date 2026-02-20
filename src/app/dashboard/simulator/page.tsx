@@ -37,6 +37,7 @@ interface Profile {
   id: string
   full_name: string
   handicap_index: number | null
+  home_club: string | null
 }
 
 interface Squad {
@@ -103,6 +104,14 @@ const PGC_GOLD = '#C9A227'
 type MatchCondition = 'calm' | 'windy' | 'rainy'
 type VenueType = 'links' | 'parkland' | 'heath' | 'cliffside'
 type HomeAwayFilter = 'all' | 'home' | 'away'
+type MatchFormat = '3_home' | '2_home' | '3_away' | '2_away'
+
+const MATCH_FORMAT_CONFIG: Record<MatchFormat, { label: string; players: number; homeAway: HomeAwayFilter; description: string }> = {
+  '3_home': { label: '3 Home Matches', players: 3, homeAway: 'home', description: '3 players at Portmarnock' },
+  '2_home': { label: '2 Home Matches', players: 2, homeAway: 'home', description: '2 players at Portmarnock' },
+  '3_away': { label: '3 Away Matches', players: 3, homeAway: 'away', description: '3 players away' },
+  '2_away': { label: '2 Away Matches', players: 2, homeAway: 'away', description: '2 players away' },
+}
 
 const CONDITION_CONFIG: Record<MatchCondition, { label: string; icon: typeof Sun; color: string }> = {
   calm: { label: 'Calm', icon: Sun, color: '#22C55E' },
@@ -149,7 +158,11 @@ export default function SimulatorPage() {
   const [selectedPlayers, setSelectedPlayers] = useState<Set<string>>(new Set())
   const [matchCondition, setMatchCondition] = useState<MatchCondition>('calm')
   const [venueType, setVenueType] = useState<VenueType>('links')
-  const [homeAwayFilter, setHomeAwayFilter] = useState<HomeAwayFilter>('all')
+  const [matchFormat, setMatchFormat] = useState<MatchFormat>('3_home')
+
+  // Derived from match format
+  const requiredPlayers = MATCH_FORMAT_CONFIG[matchFormat].players
+  const homeAwayFilter = MATCH_FORMAT_CONFIG[matchFormat].homeAway
 
   useEffect(() => {
     checkAccessAndFetchData()
@@ -204,7 +217,7 @@ export default function SimulatorPage() {
       const [squadsRes, membersRes, profilesRes, coursesRes, roundsRes] = await Promise.all([
         supabase.from('squads').select('id, name').order('name'),
         supabase.from('squad_members').select('squad_id, user_id'),
-        supabase.from('profiles').select('id, full_name, handicap_index'),
+        supabase.from('profiles').select('id, full_name, handicap_index, home_club'),
         supabase.from('courses').select('id, name, type'),
         supabase.from('rounds').select('id, user_id, course_id, date_of_round, total_strokes, total_par, weather, is_home, holes_played').order('date_of_round', { ascending: false }),
       ])
@@ -232,13 +245,21 @@ export default function SimulatorPage() {
   // COMPUTED DATA
   // ============================================
 
-  // Create course type lookup map
+  // Create course lookup maps
   const courseTypeMap = useMemo(() => {
     const map = new Map<string, string>()
     courses.forEach(c => {
       if (c.type) {
         map.set(c.id, c.type.toLowerCase())
       }
+    })
+    return map
+  }, [courses])
+
+  const courseNameMap = useMemo(() => {
+    const map = new Map<string, string>()
+    courses.forEach(c => {
+      map.set(c.id, c.name)
     })
     return map
   }, [courses])
@@ -271,16 +292,24 @@ export default function SimulatorPage() {
       const profile = profiles.find(p => p.id === playerId)
       const allPlayerRounds = rounds.filter(r => r.user_id === playerId && r.total_strokes && r.total_strokes > 0)
 
+      // Determine home/away using startsWith against player's home_club
+      const playerHomeClub = profile?.home_club || ''
+      const isRoundHome = (r: Round): boolean => {
+        if (!playerHomeClub) return false
+        const courseName = courseNameMap.get(r.course_id) || ''
+        return courseName.startsWith(playerHomeClub)
+      }
+
       // Filter rounds based on home/away selection
       const playerRounds = homeAwayFilter === 'all'
         ? allPlayerRounds
         : homeAwayFilter === 'home'
-          ? allPlayerRounds.filter(r => r.is_home === true)
-          : allPlayerRounds.filter(r => r.is_home === false)
+          ? allPlayerRounds.filter(r => isRoundHome(r))
+          : allPlayerRounds.filter(r => !isRoundHome(r))
 
       // Separate home and away rounds for stats (always calculated regardless of filter)
-      const homeRounds = allPlayerRounds.filter(r => r.is_home === true)
-      const awayRounds = allPlayerRounds.filter(r => r.is_home === false)
+      const homeRounds = allPlayerRounds.filter(r => isRoundHome(r))
+      const awayRounds = allPlayerRounds.filter(r => !isRoundHome(r))
 
       // Calculate normalized average (using strokes vs par to handle 9-hole rounds)
       const calcNormalizedAvg = (roundsList: Round[]) => {
@@ -367,7 +396,7 @@ export default function SimulatorPage() {
         venueDifferential,
       }
     }).sort((a, b) => (a.avgScore ?? 999) - (b.avgScore ?? 999))
-  }, [squadPlayerIds, profiles, rounds, courseTypeMap, venueType, homeAwayFilter])
+  }, [squadPlayerIds, profiles, rounds, courseTypeMap, courseNameMap, venueType, homeAwayFilter])
 
   // Get selected players' stats
   const selectedPlayerStats = useMemo(() => {
@@ -379,7 +408,7 @@ export default function SimulatorPage() {
   // ============================================
 
   const analytics = useMemo(() => {
-    if (selectedPlayerStats.length !== 5) {
+    if (selectedPlayerStats.length !== requiredPlayers) {
       return {
         projectedScore: null,
         windSpecialist: null,
@@ -425,7 +454,7 @@ export default function SimulatorPage() {
       .map(p => getProjectedScore(p))
       .filter((s): s is number => s !== null)
 
-    const projectedScore = validScores.length === 5
+    const projectedScore = validScores.length === requiredPlayers
       ? Math.round(validScores.reduce((sum, s) => sum + s, 0) * 10) / 10
       : null
 
@@ -453,7 +482,7 @@ export default function SimulatorPage() {
       .sort((a, b) => (getVenueScore(a, venueType) ?? 999) - (getVenueScore(b, venueType) ?? 999))
     const courseSpecialist = playersWithVenueScores.length > 0 ? playersWithVenueScores[0] : null
 
-    // Current Form (average of last 3 rounds for all 5 players)
+    // Current Form (average of last 3 rounds per player)
     const validLast3 = selectedPlayerStats
       .map(p => p.last3RoundsAvg)
       .filter((s): s is number => s !== null)
@@ -462,9 +491,9 @@ export default function SimulatorPage() {
       : null
 
     // Team Strength Meter
-    const avgPar = selectedPlayerStats.reduce((sum, p) => sum + (p.avgPar || 72), 0) / 5
-    const teamAvgScore = validScores.length === 5
-      ? validScores.reduce((sum, s) => sum + s, 0) / 5
+    const avgPar = selectedPlayerStats.reduce((sum, p) => sum + (p.avgPar || 72), 0) / requiredPlayers
+    const teamAvgScore = validScores.length === requiredPlayers
+      ? validScores.reduce((sum, s) => sum + s, 0) / requiredPlayers
       : null
 
     let teamStrength = 50
@@ -478,7 +507,7 @@ export default function SimulatorPage() {
       const scores = selectedPlayerStats
         .map(p => getVenueScore(p, venue))
         .filter((s): s is number => s !== null)
-      return scores.length >= 3 // Need at least 3 players with data
+      return scores.length >= Math.min(2, requiredPlayers) // Need at least 2 players with data
         ? Math.round((scores.reduce((sum, s) => sum + s, 0) / scores.length) * 10) / 10
         : null
     }
@@ -541,7 +570,7 @@ export default function SimulatorPage() {
       avgPar,
       venueComparison,
     }
-  }, [selectedPlayerStats, matchCondition, venueType])
+  }, [selectedPlayerStats, matchCondition, venueType, requiredPlayers])
 
   // ============================================
   // HANDLERS
@@ -556,15 +585,20 @@ export default function SimulatorPage() {
     const newSelected = new Set(selectedPlayers)
     if (newSelected.has(playerId)) {
       newSelected.delete(playerId)
-    } else if (newSelected.size < 5) {
+    } else if (newSelected.size < requiredPlayers) {
       newSelected.add(playerId)
     }
     setSelectedPlayers(newSelected)
   }
 
-  const selectTopFive = () => {
-    const topFive = playerStats.slice(0, 5).map(p => p.id)
-    setSelectedPlayers(new Set(topFive))
+  const selectTopPlayers = () => {
+    const top = playerStats.slice(0, requiredPlayers).map(p => p.id)
+    setSelectedPlayers(new Set(top))
+  }
+
+  const handleMatchFormatChange = (format: MatchFormat) => {
+    setMatchFormat(format)
+    setSelectedPlayers(new Set()) // Reset selection when format changes
   }
 
   const clearSelection = () => {
@@ -611,7 +645,7 @@ export default function SimulatorPage() {
               </h1>
               <Shield className="w-5 h-5" style={{ color: PGC_GOLD }} />
             </div>
-            <p className="text-white/60 mt-1">Build your optimal 5-player lineup</p>
+            <p className="text-white/60 mt-1">Build your optimal Senior Cup lineup</p>
           </div>
         </div>
       </div>
@@ -651,11 +685,11 @@ export default function SimulatorPage() {
               {selectedSquad && (
                 <div className="flex gap-2">
                   <button
-                    onClick={selectTopFive}
+                    onClick={selectTopPlayers}
                     className="px-4 py-3 rounded-lg text-sm font-medium transition-all"
                     style={{ backgroundColor: `${PGC_GOLD}20`, color: PGC_GOLD, border: `1px solid ${PGC_GOLD}40` }}
                   >
-                    Select Top 5
+                    Auto Select Top {requiredPlayers}
                   </button>
                   <button
                     onClick={clearSelection}
@@ -673,14 +707,14 @@ export default function SimulatorPage() {
                 <div
                   className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium"
                   style={{
-                    backgroundColor: selectedPlayers.size === 5 ? `${PGC_GOLD}30` : 'rgba(255,255,255,0.1)',
-                    color: selectedPlayers.size === 5 ? PGC_GOLD : 'white',
+                    backgroundColor: selectedPlayers.size === requiredPlayers ? `${PGC_GOLD}30` : 'rgba(255,255,255,0.1)',
+                    color: selectedPlayers.size === requiredPlayers ? PGC_GOLD : 'white',
                   }}
                 >
                   <UserCheck className="w-4 h-4" />
-                  {selectedPlayers.size} / 5 players selected
+                  {selectedPlayers.size} / {requiredPlayers} players selected
                 </div>
-                {selectedPlayers.size === 5 && (
+                {selectedPlayers.size === requiredPlayers && (
                   <Check className="w-5 h-5 text-green-400" />
                 )}
               </div>
@@ -706,7 +740,7 @@ export default function SimulatorPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {playerStats.map((player) => {
                     const isSelected = selectedPlayers.has(player.id)
-                    const isDisabled = !isSelected && selectedPlayers.size >= 5
+                    const isDisabled = !isSelected && selectedPlayers.size >= requiredPlayers
                     const venueScore = player[`avgScore${venueType.charAt(0).toUpperCase() + venueType.slice(1)}` as keyof PlayerStats] as number | null
 
                     return (
@@ -816,36 +850,38 @@ export default function SimulatorPage() {
 
         {/* Right Column - Analytics & Starting Lineup */}
         <div className="space-y-6">
-          {/* Home vs Away Toggle */}
+          {/* Match Format Selector */}
           <div
             className="rounded-xl p-6"
             style={{ backgroundColor: PGC_DARK_GREEN, border: `1px solid ${PGC_GOLD}40` }}
           >
             <h3 className="text-sm font-semibold uppercase tracking-wide mb-4" style={{ color: PGC_GOLD }}>
-              Home vs Away
+              Match Format
             </h3>
-            <div className="grid grid-cols-3 gap-2">
-              {(Object.entries(HOME_AWAY_CONFIG) as [HomeAwayFilter, typeof HOME_AWAY_CONFIG['all']][]).map(([key, config]) => {
-                const isActive = homeAwayFilter === key
-                const Icon = key === 'home' ? Home : key === 'away' ? Plane : Globe
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.entries(MATCH_FORMAT_CONFIG) as [MatchFormat, typeof MATCH_FORMAT_CONFIG['3_home']][]).map(([key, config]) => {
+                const isActive = matchFormat === key
+                const isHome = config.homeAway === 'home'
+                const Icon = isHome ? Home : Plane
+                const color = isHome ? '#22C55E' : '#F59E0B'
 
                 return (
                   <button
                     key={key}
-                    onClick={() => setHomeAwayFilter(key)}
+                    onClick={() => handleMatchFormatChange(key)}
                     className="p-3 rounded-xl text-center transition-all"
                     style={{
-                      backgroundColor: isActive ? `${config.color}30` : 'rgba(255,255,255,0.05)',
-                      border: `2px solid ${isActive ? config.color : 'transparent'}`,
+                      backgroundColor: isActive ? `${color}30` : 'rgba(255,255,255,0.05)',
+                      border: `2px solid ${isActive ? color : 'transparent'}`,
                     }}
                   >
                     <Icon
                       className="w-5 h-5 mx-auto mb-1"
-                      style={{ color: isActive ? config.color : 'white' }}
+                      style={{ color: isActive ? color : 'white' }}
                     />
                     <span
                       className="text-xs font-medium block"
-                      style={{ color: isActive ? config.color : 'rgba(255,255,255,0.7)' }}
+                      style={{ color: isActive ? color : 'rgba(255,255,255,0.7)' }}
                     >
                       {config.label}
                     </span>
@@ -945,7 +981,7 @@ export default function SimulatorPage() {
                 Team Strength Meter
               </h3>
               <span className="text-2xl font-bold" style={{ color: PGC_GOLD }}>
-                {selectedPlayers.size === 5 ? `${Math.round(analytics.teamStrength)}%` : '—'}
+                {selectedPlayers.size === requiredPlayers ? `${Math.round(analytics.teamStrength)}%` : '—'}
               </span>
             </div>
             <div
@@ -955,7 +991,7 @@ export default function SimulatorPage() {
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
-                  width: selectedPlayers.size === 5 ? `${analytics.teamStrength}%` : '0%',
+                  width: selectedPlayers.size === requiredPlayers ? `${analytics.teamStrength}%` : '0%',
                   background: `linear-gradient(90deg, ${PGC_GOLD} 0%, #22C55E 100%)`,
                 }}
               />
@@ -974,10 +1010,10 @@ export default function SimulatorPage() {
               Team Analytics
             </h3>
 
-            {selectedPlayers.size !== 5 ? (
+            {selectedPlayers.size !== requiredPlayers ? (
               <div className="text-center py-6">
                 <AlertCircle className="w-10 h-10 mx-auto mb-3 text-white/30" />
-                <p className="text-white/50 text-sm">Select exactly 5 players to see analytics</p>
+                <p className="text-white/50 text-sm">Select {requiredPlayers} players to see analytics</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -992,7 +1028,7 @@ export default function SimulatorPage() {
                   <p className="text-3xl font-bold" style={{ color: PGC_GOLD }}>
                     {analytics.projectedScore ?? '—'}
                   </p>
-                  <p className="text-xs text-white/40 mt-1">Combined 5-player total</p>
+                  <p className="text-xs text-white/40 mt-1">Combined {requiredPlayers}-player total</p>
                 </div>
 
                 {/* Venue Comparison Insight */}
@@ -1188,7 +1224,7 @@ export default function SimulatorPage() {
                 })}
 
                 {/* Empty slots */}
-                {Array.from({ length: 5 - selectedPlayers.size }).map((_, i) => (
+                {Array.from({ length: Math.max(0, requiredPlayers - selectedPlayers.size) }).map((_, i) => (
                   <div
                     key={`empty-${i}`}
                     className="flex items-center gap-3 p-3 rounded-lg border-2 border-dashed"

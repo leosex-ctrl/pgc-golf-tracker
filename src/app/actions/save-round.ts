@@ -72,7 +72,7 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
     // 2. Verify the course exists
     const { data: course, error: courseError } = await supabase
       .from('courses')
-      .select('id, location')
+      .select('id, name, location')
       .eq('id', data.course_id)
       .single();
 
@@ -82,6 +82,18 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
 
     const courseId = course.id;
     const courseLocation = course.location;
+
+    // 2b. Determine home/away using startsWith against user's home_club
+    let isHome: boolean | null = null;
+    const { data: userProfile } = await supabase
+      .from('profiles')
+      .select('home_club')
+      .eq('id', user.id)
+      .single();
+
+    if (userProfile?.home_club && course.name) {
+      isHome = course.name.startsWith(userProfile.home_club);
+    }
 
     // 3. Fetch weather data automatically
     let weatherCategory = data.weather || 'Other';
@@ -134,6 +146,7 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
         total_par: totalPar,
         score_to_par: totalStrokes - totalPar,
         holes_played: holesPlayed,
+        is_home: isHome,
       })
       .select('id')
       .single();
