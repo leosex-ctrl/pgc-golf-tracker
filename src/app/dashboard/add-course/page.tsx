@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import Link from 'next/link'
@@ -13,6 +13,29 @@ import { ArrowLeft, Check, AlertCircle } from 'lucide-react'
 interface HoleInput {
   par: number
   strokeIndex: number
+  distance: number
+}
+
+interface Course {
+  id: string
+  name: string
+  par: number | null
+  rating: number | null
+  slope: number
+  standard_scratch: number
+  hole_count: 9 | 18
+  location: string | null
+  course_type: string | null
+  tee_color: string | null
+}
+
+interface CourseHole {
+  id: string
+  course_id: string
+  hole_number: number
+  par: number
+  stroke_index: number
+  distance: number
 }
 
 // ============================================
@@ -25,26 +48,43 @@ export default function AddCoursePage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  // Form state - ONLY fields that exist in courses table
+  // Form state - course-level fields
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
   const [teeColor, setTeeColor] = useState('White')
   const [courseType, setCourseType] = useState('Parkland')
+  const [slope, setSlope] = useState<number | ''>('')
+  const [standardScratch, setStandardScratch] = useState<number | ''>('')
+  const [holeCount, setHoleCount] = useState<9 | 18>(18)
 
-  // 18 holes - stored in course_holes table
+  // Hole data
   const [holes, setHoles] = useState<HoleInput[]>(
     Array.from({ length: 18 }, (_, i) => ({
       par: 4,
       strokeIndex: i + 1,
+      distance: 0,
     }))
   )
 
-  // Calculate totals for display only (NOT stored in courses table)
-  const totalPar = holes.reduce((sum, h) => sum + h.par, 0)
-  const frontNinePar = holes.slice(0, 9).reduce((sum, h) => sum + h.par, 0)
-  const backNinePar = holes.slice(9, 18).reduce((sum, h) => sum + h.par, 0)
+  // When hole count changes, reset holes array
+  const handleHoleCountChange = (count: 9 | 18) => {
+    setHoleCount(count)
+    setHoles(
+      Array.from({ length: count }, (_, i) => ({
+        par: 4,
+        strokeIndex: i + 1,
+        distance: 0,
+      }))
+    )
+  }
 
-  const updateHole = (index: number, field: 'par' | 'strokeIndex', value: number) => {
+  // Only use the rendered holes for calculations
+  const renderedHoles = holes.slice(0, holeCount)
+  const totalPar = renderedHoles.reduce((sum, h) => sum + h.par, 0)
+  const frontNinePar = renderedHoles.slice(0, 9).reduce((sum, h) => sum + h.par, 0)
+  const backNinePar = holeCount === 18 ? renderedHoles.slice(9, 18).reduce((sum, h) => sum + h.par, 0) : 0
+
+  const updateHole = (index: number, field: keyof HoleInput, value: number) => {
     setHoles(prev => {
       const updated = [...prev]
       updated[index] = { ...updated[index], [field]: value }
@@ -53,30 +93,62 @@ export default function AddCoursePage() {
   }
 
   // ============================================
-  // VALIDATION
+  // VALIDATION - form is valid only when everything is filled
   // ============================================
+
+  const isFormComplete = useMemo(() => {
+    if (!name.trim()) return false
+    if (!teeColor.trim()) return false
+    if (slope === '' || slope <= 0) return false
+    if (standardScratch === '' || standardScratch <= 0) return false
+
+    // Every rendered hole must have distance > 0
+    for (let i = 0; i < holeCount; i++) {
+      if (holes[i].distance <= 0) return false
+    }
+
+    // Stroke indexes must be unique 1-N
+    const siValues = holes.slice(0, holeCount).map(h => h.strokeIndex)
+    const uniqueSI = new Set(siValues)
+    if (uniqueSI.size !== holeCount) return false
+    if (siValues.some(si => si < 1 || si > holeCount)) return false
+
+    return true
+  }, [name, teeColor, slope, standardScratch, holeCount, holes])
 
   const validateForm = (): boolean => {
     if (!name.trim()) {
       setError('Course name is required')
       return false
     }
-
     if (!teeColor.trim()) {
       setError('Tee color is required')
       return false
     }
-
-    // Validate stroke indexes are unique 1-18
-    const siValues = holes.map(h => h.strokeIndex)
-    const uniqueSI = new Set(siValues)
-    if (uniqueSI.size !== 18) {
-      setError('Each stroke index must be unique (1-18). Please check for duplicates.')
+    if (slope === '' || slope <= 0) {
+      setError('Slope is required and must be a positive number')
+      return false
+    }
+    if (standardScratch === '' || standardScratch <= 0) {
+      setError('Standard Scratch (SSS) is required and must be a positive number')
       return false
     }
 
-    if (siValues.some(si => si < 1 || si > 18)) {
-      setError('Stroke index must be between 1 and 18')
+    for (let i = 0; i < holeCount; i++) {
+      if (holes[i].distance <= 0) {
+        setError(`Hole ${i + 1} is missing a distance`)
+        return false
+      }
+    }
+
+    const siValues = holes.slice(0, holeCount).map(h => h.strokeIndex)
+    const uniqueSI = new Set(siValues)
+    if (uniqueSI.size !== holeCount) {
+      setError(`Each stroke index must be unique (1-${holeCount}). Please check for duplicates.`)
+      return false
+    }
+    if (siValues.some(si => si < 1 || si > holeCount)) {
+      setError(`Stroke index must be between 1 and ${holeCount}`)
       return false
     }
 
@@ -99,7 +171,6 @@ export default function AddCoursePage() {
     try {
       const supabase = createClient()
 
-      // Check auth
       const { data: { user }, error: authError } = await supabase.auth.getUser()
       if (authError || !user) {
         console.error('Supabase Error:', JSON.stringify(authError, null, 2))
@@ -110,7 +181,6 @@ export default function AddCoursePage() {
 
       // ============================================
       // STEP 1: INSERT INTO courses TABLE
-      // STRICT SCHEMA: { name, location, tee_color, par, course_type }
       // ============================================
       const courseData = {
         name: name.trim(),
@@ -118,6 +188,9 @@ export default function AddCoursePage() {
         tee_color: teeColor.trim(),
         par: totalPar,
         course_type: courseType,
+        slope: Number(slope),
+        standard_scratch: Number(standardScratch),
+        hole_count: holeCount,
       }
 
       console.log('Inserting course:', JSON.stringify(courseData, null, 2))
@@ -146,13 +219,13 @@ export default function AddCoursePage() {
 
       // ============================================
       // STEP 2: BULK INSERT INTO course_holes TABLE
-      // SCHEMA: { course_id, hole_number, par, stroke_index }
       // ============================================
-      const holesData = holes.map((hole, index) => ({
+      const holesData = renderedHoles.map((hole, index) => ({
         course_id: course.id,
         hole_number: Number(index + 1),
         par: Number(hole.par),
         stroke_index: Number(hole.strokeIndex),
+        distance: Number(hole.distance),
       }))
 
       console.log('Inserting holes:', JSON.stringify(holesData, null, 2))
@@ -171,8 +244,8 @@ export default function AddCoursePage() {
       // ============================================
       // SUCCESS
       // ============================================
-      console.log('All 18 holes saved successfully')
-      setSuccess(`"${name}" added successfully with all 18 holes!`)
+      console.log(`All ${holeCount} holes saved successfully`)
+      setSuccess(`"${name}" added successfully with all ${holeCount} holes!`)
 
       setTimeout(() => {
         router.push('/dashboard/add-round')
@@ -185,6 +258,13 @@ export default function AddCoursePage() {
       setIsSubmitting(false)
     }
   }
+
+  // ============================================
+  // SHARED STYLES
+  // ============================================
+
+  const inputStyle = { border: '1px solid rgba(201, 162, 39, 0.5)', '--tw-ring-color': '#C9A227' } as React.CSSProperties
+  const selectCellStyle = { border: '1px solid rgba(201, 162, 39, 0.5)' }
 
   // ============================================
   // RENDER
@@ -222,7 +302,7 @@ export default function AddCoursePage() {
               Add New Course
             </h1>
             <p className="text-white/70 text-sm mt-1">
-              Enter course details and hole-by-hole Par & Stroke Index
+              Enter course details and hole-by-hole Par, Stroke Index & Distance
             </p>
           </div>
 
@@ -271,7 +351,7 @@ export default function AddCoursePage() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg bg-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2"
-                    style={{ border: '1px solid rgba(201, 162, 39, 0.5)', '--tw-ring-color': '#C9A227' } as React.CSSProperties}
+                    style={inputStyle}
                     placeholder="e.g., Portmarnock Golf Club"
                   />
                 </div>
@@ -285,8 +365,40 @@ export default function AddCoursePage() {
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg bg-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2"
-                    style={{ border: '1px solid rgba(201, 162, 39, 0.5)', '--tw-ring-color': '#C9A227' } as React.CSSProperties}
+                    style={inputStyle}
                     placeholder="e.g., Portmarnock, Dublin"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-white/80 mb-1">
+                    Slope <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={slope}
+                    onChange={(e) => setSlope(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-lg bg-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2"
+                    style={inputStyle}
+                    placeholder="e.g., 135"
+                    min={55}
+                    max={155}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-white/80 mb-1">
+                    Standard Scratch (SSS) <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={standardScratch}
+                    onChange={(e) => setStandardScratch(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-lg bg-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2"
+                    style={inputStyle}
+                    placeholder="e.g., 72"
+                    min={1}
+                    max={100}
                   />
                 </div>
 
@@ -298,7 +410,7 @@ export default function AddCoursePage() {
                     value={courseType}
                     onChange={(e) => setCourseType(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg bg-white/10 text-white focus:outline-none focus:ring-2"
-                    style={{ border: '1px solid rgba(201, 162, 39, 0.5)', '--tw-ring-color': '#C9A227' } as React.CSSProperties}
+                    style={inputStyle}
                   >
                     <option value="Parkland" className="bg-[#1B4D3E] text-white">Parkland</option>
                     <option value="Links" className="bg-[#1B4D3E] text-white">Links</option>
@@ -316,7 +428,7 @@ export default function AddCoursePage() {
                     value={teeColor}
                     onChange={(e) => setTeeColor(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg bg-white/10 text-white focus:outline-none focus:ring-2"
-                    style={{ border: '1px solid rgba(201, 162, 39, 0.5)', '--tw-ring-color': '#C9A227' } as React.CSSProperties}
+                    style={inputStyle}
                   >
                     <option value="White" className="bg-[#1B4D3E] text-white">White</option>
                     <option value="Blue" className="bg-[#1B4D3E] text-white">Blue</option>
@@ -326,6 +438,38 @@ export default function AddCoursePage() {
                     <option value="Championship" className="bg-[#1B4D3E] text-white">Championship</option>
                   </select>
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-white/80 mb-1">
+                    Holes <span className="text-red-400">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleHoleCountChange(9)}
+                      className="flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-colors"
+                      style={
+                        holeCount === 9
+                          ? { backgroundColor: '#C9A227', color: '#1B4D3E' }
+                          : { backgroundColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.7)', border: '1px solid rgba(201, 162, 39, 0.5)' }
+                      }
+                    >
+                      9 Holes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleHoleCountChange(18)}
+                      className="flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-colors"
+                      style={
+                        holeCount === 18
+                          ? { backgroundColor: '#C9A227', color: '#1B4D3E' }
+                          : { backgroundColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.7)', border: '1px solid rgba(201, 162, 39, 0.5)' }
+                      }
+                    >
+                      18 Holes
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -333,7 +477,7 @@ export default function AddCoursePage() {
             <div style={{ borderTop: '1px solid rgba(201, 162, 39, 0.3)' }} className="pt-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold" style={{ color: '#C9A227' }}>
-                  Hole Data (Par & Stroke Index)
+                  Hole Data (Par, S.I. & Distance)
                 </h2>
                 <div
                   className="text-sm font-medium px-3 py-1 rounded-full"
@@ -364,7 +508,7 @@ export default function AddCoursePage() {
                             value={hole.par}
                             onChange={(e) => updateHole(i, 'par', parseInt(e.target.value, 10))}
                             className="w-full p-1 rounded text-center text-sm bg-white/10 text-white"
-                            style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
+                            style={selectCellStyle}
                           >
                             <option value={3} className="bg-[#1B4D3E]">3</option>
                             <option value={4} className="bg-[#1B4D3E]">4</option>
@@ -374,7 +518,7 @@ export default function AddCoursePage() {
                       ))}
                       <td className="py-2 px-2 text-center font-bold" style={{ color: '#C9A227' }}>{frontNinePar}</td>
                     </tr>
-                    <tr style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
+                    <tr>
                       <td className="py-2 px-2 font-medium text-white/70">S.I.</td>
                       {holes.slice(0, 9).map((hole, i) => (
                         <td key={i} className="py-1 px-1">
@@ -382,12 +526,29 @@ export default function AddCoursePage() {
                             value={hole.strokeIndex}
                             onChange={(e) => updateHole(i, 'strokeIndex', parseInt(e.target.value, 10))}
                             className="w-full p-1 rounded text-center text-sm bg-white/10 text-white"
-                            style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
+                            style={selectCellStyle}
                           >
-                            {Array.from({ length: 18 }, (_, n) => (
+                            {Array.from({ length: holeCount }, (_, n) => (
                               <option key={n + 1} value={n + 1} className="bg-[#1B4D3E]">{n + 1}</option>
                             ))}
                           </select>
+                        </td>
+                      ))}
+                      <td className="py-2 px-2"></td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
+                      <td className="py-2 px-2 font-medium text-white/70">Dist</td>
+                      {holes.slice(0, 9).map((hole, i) => (
+                        <td key={i} className="py-1 px-1">
+                          <input
+                            type="number"
+                            value={hole.distance || ''}
+                            onChange={(e) => updateHole(i, 'distance', e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                            className="w-full p-1 rounded text-center text-sm bg-white/10 text-white placeholder-white/30"
+                            style={selectCellStyle}
+                            placeholder="yds"
+                            min={1}
+                          />
                         </td>
                       ))}
                       <td className="py-2 px-2"></td>
@@ -397,77 +558,97 @@ export default function AddCoursePage() {
               </div>
 
               {/* Desktop Grid - Back 9 */}
-              <div className="hidden md:block">
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr style={{ backgroundColor: 'rgba(201, 162, 39, 0.3)' }}>
-                      <th className="py-2 px-2 text-white font-medium text-left w-16">Hole</th>
-                      {[10,11,12,13,14,15,16,17,18].map(n => (
-                        <th key={n} className="py-2 px-1 text-white font-medium text-center w-14">{n}</th>
-                      ))}
-                      <th className="py-2 px-2 font-medium text-center w-16" style={{ backgroundColor: '#C9A227', color: '#1B4D3E' }}>IN</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)' }}>
-                      <td className="py-2 px-2 font-medium text-white/70">Par</td>
-                      {holes.slice(9, 18).map((hole, i) => (
-                        <td key={i} className="py-1 px-1">
-                          <select
-                            value={hole.par}
-                            onChange={(e) => updateHole(i + 9, 'par', parseInt(e.target.value, 10))}
-                            className="w-full p-1 rounded text-center text-sm bg-white/10 text-white"
-                            style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
-                          >
-                            <option value={3} className="bg-[#1B4D3E]">3</option>
-                            <option value={4} className="bg-[#1B4D3E]">4</option>
-                            <option value={5} className="bg-[#1B4D3E]">5</option>
-                          </select>
-                        </td>
-                      ))}
-                      <td className="py-2 px-2 text-center font-bold" style={{ color: '#C9A227' }}>{backNinePar}</td>
-                    </tr>
-                    <tr style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
-                      <td className="py-2 px-2 font-medium text-white/70">S.I.</td>
-                      {holes.slice(9, 18).map((hole, i) => (
-                        <td key={i} className="py-1 px-1">
-                          <select
-                            value={hole.strokeIndex}
-                            onChange={(e) => updateHole(i + 9, 'strokeIndex', parseInt(e.target.value, 10))}
-                            className="w-full p-1 rounded text-center text-sm bg-white/10 text-white"
-                            style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
-                          >
-                            {Array.from({ length: 18 }, (_, n) => (
-                              <option key={n + 1} value={n + 1} className="bg-[#1B4D3E]">{n + 1}</option>
-                            ))}
-                          </select>
-                        </td>
-                      ))}
-                      <td className="py-2 px-2"></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              {holeCount === 18 && (
+                <div className="hidden md:block">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr style={{ backgroundColor: 'rgba(201, 162, 39, 0.3)' }}>
+                        <th className="py-2 px-2 text-white font-medium text-left w-16">Hole</th>
+                        {[10,11,12,13,14,15,16,17,18].map(n => (
+                          <th key={n} className="py-2 px-1 text-white font-medium text-center w-14">{n}</th>
+                        ))}
+                        <th className="py-2 px-2 font-medium text-center w-16" style={{ backgroundColor: '#C9A227', color: '#1B4D3E' }}>IN</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)' }}>
+                        <td className="py-2 px-2 font-medium text-white/70">Par</td>
+                        {holes.slice(9, 18).map((hole, i) => (
+                          <td key={i} className="py-1 px-1">
+                            <select
+                              value={hole.par}
+                              onChange={(e) => updateHole(i + 9, 'par', parseInt(e.target.value, 10))}
+                              className="w-full p-1 rounded text-center text-sm bg-white/10 text-white"
+                              style={selectCellStyle}
+                            >
+                              <option value={3} className="bg-[#1B4D3E]">3</option>
+                              <option value={4} className="bg-[#1B4D3E]">4</option>
+                              <option value={5} className="bg-[#1B4D3E]">5</option>
+                            </select>
+                          </td>
+                        ))}
+                        <td className="py-2 px-2 text-center font-bold" style={{ color: '#C9A227' }}>{backNinePar}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 px-2 font-medium text-white/70">S.I.</td>
+                        {holes.slice(9, 18).map((hole, i) => (
+                          <td key={i} className="py-1 px-1">
+                            <select
+                              value={hole.strokeIndex}
+                              onChange={(e) => updateHole(i + 9, 'strokeIndex', parseInt(e.target.value, 10))}
+                              className="w-full p-1 rounded text-center text-sm bg-white/10 text-white"
+                              style={selectCellStyle}
+                            >
+                              {Array.from({ length: holeCount }, (_, n) => (
+                                <option key={n + 1} value={n + 1} className="bg-[#1B4D3E]">{n + 1}</option>
+                              ))}
+                            </select>
+                          </td>
+                        ))}
+                        <td className="py-2 px-2"></td>
+                      </tr>
+                      <tr style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
+                        <td className="py-2 px-2 font-medium text-white/70">Dist</td>
+                        {holes.slice(9, 18).map((hole, i) => (
+                          <td key={i} className="py-1 px-1">
+                            <input
+                              type="number"
+                              value={hole.distance || ''}
+                              onChange={(e) => updateHole(i + 9, 'distance', e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                              className="w-full p-1 rounded text-center text-sm bg-white/10 text-white placeholder-white/30"
+                              style={selectCellStyle}
+                              placeholder="yds"
+                              min={1}
+                            />
+                          </td>
+                        ))}
+                        <td className="py-2 px-2"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* Mobile Grid */}
-              <div className="md:hidden grid grid-cols-2 gap-4">
+              <div className="md:hidden space-y-6">
                 {/* Front 9 */}
                 <div>
                   <h3 className="text-sm font-semibold mb-2" style={{ color: '#C9A227' }}>Front 9</h3>
                   <div className="space-y-1">
-                    <div className="grid grid-cols-3 gap-1 text-xs font-medium text-white/60 pb-1" style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
+                    <div className="grid grid-cols-4 gap-1 text-xs font-medium text-white/60 pb-1" style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
                       <span>Hole</span>
                       <span className="text-center">Par</span>
                       <span className="text-center">S.I.</span>
+                      <span className="text-center">Dist</span>
                     </div>
                     {holes.slice(0, 9).map((hole, i) => (
-                      <div key={i} className="grid grid-cols-3 gap-1 items-center">
+                      <div key={i} className="grid grid-cols-4 gap-1 items-center">
                         <span className="text-sm font-medium text-white">{i + 1}</span>
                         <select
                           value={hole.par}
                           onChange={(e) => updateHole(i, 'par', parseInt(e.target.value, 10))}
                           className="text-xs p-1 rounded text-center bg-white/10 text-white"
-                          style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
+                          style={selectCellStyle}
                         >
                           <option value={3} className="bg-[#1B4D3E]">3</option>
                           <option value={4} className="bg-[#1B4D3E]">4</option>
@@ -477,12 +658,21 @@ export default function AddCoursePage() {
                           value={hole.strokeIndex}
                           onChange={(e) => updateHole(i, 'strokeIndex', parseInt(e.target.value, 10))}
                           className="text-xs p-1 rounded text-center bg-white/10 text-white"
-                          style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
+                          style={selectCellStyle}
                         >
-                          {Array.from({ length: 18 }, (_, n) => (
+                          {Array.from({ length: holeCount }, (_, n) => (
                             <option key={n + 1} value={n + 1} className="bg-[#1B4D3E]">{n + 1}</option>
                           ))}
                         </select>
+                        <input
+                          type="number"
+                          value={hole.distance || ''}
+                          onChange={(e) => updateHole(i, 'distance', e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                          className="text-xs p-1 rounded text-center bg-white/10 text-white placeholder-white/30"
+                          style={selectCellStyle}
+                          placeholder="yds"
+                          min={1}
+                        />
                       </div>
                     ))}
                     <div className="pt-1 text-sm font-medium" style={{ borderTop: '1px solid rgba(201, 162, 39, 0.2)', color: '#C9A227' }}>
@@ -492,44 +682,56 @@ export default function AddCoursePage() {
                 </div>
 
                 {/* Back 9 */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-2" style={{ color: '#C9A227' }}>Back 9</h3>
-                  <div className="space-y-1">
-                    <div className="grid grid-cols-3 gap-1 text-xs font-medium text-white/60 pb-1" style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
-                      <span>Hole</span>
-                      <span className="text-center">Par</span>
-                      <span className="text-center">S.I.</span>
-                    </div>
-                    {holes.slice(9, 18).map((hole, i) => (
-                      <div key={i} className="grid grid-cols-3 gap-1 items-center">
-                        <span className="text-sm font-medium text-white">{i + 10}</span>
-                        <select
-                          value={hole.par}
-                          onChange={(e) => updateHole(i + 9, 'par', parseInt(e.target.value, 10))}
-                          className="text-xs p-1 rounded text-center bg-white/10 text-white"
-                          style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
-                        >
-                          <option value={3} className="bg-[#1B4D3E]">3</option>
-                          <option value={4} className="bg-[#1B4D3E]">4</option>
-                          <option value={5} className="bg-[#1B4D3E]">5</option>
-                        </select>
-                        <select
-                          value={hole.strokeIndex}
-                          onChange={(e) => updateHole(i + 9, 'strokeIndex', parseInt(e.target.value, 10))}
-                          className="text-xs p-1 rounded text-center bg-white/10 text-white"
-                          style={{ border: '1px solid rgba(201, 162, 39, 0.5)' }}
-                        >
-                          {Array.from({ length: 18 }, (_, n) => (
-                            <option key={n + 1} value={n + 1} className="bg-[#1B4D3E]">{n + 1}</option>
-                          ))}
-                        </select>
+                {holeCount === 18 && (
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2" style={{ color: '#C9A227' }}>Back 9</h3>
+                    <div className="space-y-1">
+                      <div className="grid grid-cols-4 gap-1 text-xs font-medium text-white/60 pb-1" style={{ borderBottom: '1px solid rgba(201, 162, 39, 0.2)' }}>
+                        <span>Hole</span>
+                        <span className="text-center">Par</span>
+                        <span className="text-center">S.I.</span>
+                        <span className="text-center">Dist</span>
                       </div>
-                    ))}
-                    <div className="pt-1 text-sm font-medium" style={{ borderTop: '1px solid rgba(201, 162, 39, 0.2)', color: '#C9A227' }}>
-                      In: {backNinePar}
+                      {holes.slice(9, 18).map((hole, i) => (
+                        <div key={i} className="grid grid-cols-4 gap-1 items-center">
+                          <span className="text-sm font-medium text-white">{i + 10}</span>
+                          <select
+                            value={hole.par}
+                            onChange={(e) => updateHole(i + 9, 'par', parseInt(e.target.value, 10))}
+                            className="text-xs p-1 rounded text-center bg-white/10 text-white"
+                            style={selectCellStyle}
+                          >
+                            <option value={3} className="bg-[#1B4D3E]">3</option>
+                            <option value={4} className="bg-[#1B4D3E]">4</option>
+                            <option value={5} className="bg-[#1B4D3E]">5</option>
+                          </select>
+                          <select
+                            value={hole.strokeIndex}
+                            onChange={(e) => updateHole(i + 9, 'strokeIndex', parseInt(e.target.value, 10))}
+                            className="text-xs p-1 rounded text-center bg-white/10 text-white"
+                            style={selectCellStyle}
+                          >
+                            {Array.from({ length: holeCount }, (_, n) => (
+                              <option key={n + 1} value={n + 1} className="bg-[#1B4D3E]">{n + 1}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            value={hole.distance || ''}
+                            onChange={(e) => updateHole(i + 9, 'distance', e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                            className="text-xs p-1 rounded text-center bg-white/10 text-white placeholder-white/30"
+                            style={selectCellStyle}
+                            placeholder="yds"
+                            min={1}
+                          />
+                        </div>
+                      ))}
+                      <div className="pt-1 text-sm font-medium" style={{ borderTop: '1px solid rgba(201, 162, 39, 0.2)', color: '#C9A227' }}>
+                        In: {backNinePar}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
@@ -544,8 +746,8 @@ export default function AddCoursePage() {
               </Link>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="flex-1 py-3 px-4 rounded-lg font-medium transition-colors disabled:opacity-50"
+                disabled={isSubmitting || !isFormComplete}
+                className="flex-1 py-3 px-4 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ backgroundColor: '#C9A227', color: '#1B4D3E' }}
               >
                 {isSubmitting ? 'Saving...' : 'Save Course'}
