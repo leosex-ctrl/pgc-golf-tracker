@@ -10,10 +10,12 @@ export interface HoleData {
   hole: number;
   par: number;
   distance: number;
+  strokeIndex?: number;
   strokes: number | null;
 }
 
 export interface RoundData {
+  course_id: string;
   course_name: string;
   date: string;
   weather: string;
@@ -66,51 +68,30 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
       return { success: false, error: 'Not authenticated. Please log in.' };
     }
 
-    // 2. Upsert Course - Check if exists, insert if not
-    let courseId: string;
-    let courseLocation: string | null = null;
-
-    const { data: existingCourse } = await supabase
+    // 2. Verify the course exists
+    const { data: course, error: courseError } = await supabase
       .from('courses')
       .select('id, location')
-      .eq('name', data.course_name)
+      .eq('id', data.course_id)
       .single();
 
-    if (existingCourse) {
-      courseId = existingCourse.id;
-      courseLocation = existingCourse.location;
-    } else {
-      // Insert new course
-      const { data: newCourse, error: courseError } = await supabase
-        .from('courses')
-        .insert({
-          name: data.course_name,
-          rating: data.course_rating,
-          slope: data.slope_rating,
-        })
-        .select('id, location')
-        .single();
-
-      if (courseError || !newCourse) {
-        return { success: false, error: `Failed to create course: ${courseError?.message}` };
-      }
-
-      courseId = newCourse.id;
-      courseLocation = newCourse.location;
+    if (courseError || !course) {
+      return { success: false, error: 'Selected course not found. Please select a valid course.' };
     }
+
+    const courseId = course.id;
+    const courseLocation = course.location;
 
     // 3. Fetch weather data automatically
     let weatherCategory = data.weather || 'Other';
     let tempC: number | null = null;
     let windSpeedKph: number | null = null;
 
-    // Only fetch weather if we have a location and date
     if (courseLocation && data.date) {
       try {
         const weatherData = await fetchHistoricalWeather(data.date, courseLocation);
 
         if (weatherData) {
-          // Use API weather if no manual weather was provided, or override with API data
           if (!data.weather || data.weather === '' || data.weather === 'Other') {
             weatherCategory = weatherData.weather;
           }
@@ -120,18 +101,24 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
           console.log(`Weather auto-populated: ${weatherCategory}, ${tempC}°C, ${windSpeedKph} kph`);
         }
       } catch (weatherError) {
-        // Weather fetch failed - continue with manual/default weather
         console.warn('Weather lookup failed, using manual input:', weatherError);
       }
     }
 
-    // 4. Calculate total score (only count holes based on round_length)
+    // 4. Apply triple bogey rule and calculate totals
     const holesPlayed = data.round_length || 18;
     const activeHoles = data.holes.slice(0, holesPlayed);
-    const totalStrokes = activeHoles.reduce((sum, h) => sum + (h.strokes || 0), 0);
-    const totalPar = activeHoles.reduce((sum, h) => sum + h.par, 0);
 
-    // 5. Insert Round with weather data and holes_played
+    // Triple bogey rule: blank/null strokes = par + 3
+    const finalHoles = activeHoles.map((h) => ({
+      ...h,
+      strokes: h.strokes !== null && h.strokes > 0 ? h.strokes : h.par + 3,
+    }));
+
+    const totalStrokes = finalHoles.reduce((sum, h) => sum + h.strokes, 0);
+    const totalPar = finalHoles.reduce((sum, h) => sum + h.par, 0);
+
+    // 5. Insert Round
     const { data: newRound, error: roundError } = await supabase
       .from('rounds')
       .insert({
@@ -153,8 +140,8 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
       return { success: false, error: `Failed to create round: ${roundError?.message}` };
     }
 
-    // 6. Bulk Insert Scores (only for active holes)
-    const scoreRows = activeHoles.map((hole) => ({
+    // 6. Bulk Insert Scores
+    const scoreRows = finalHoles.map((hole) => ({
       round_id: newRound.id,
       hole_number: hole.hole,
       par: hole.par,
