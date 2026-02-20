@@ -42,6 +42,7 @@ interface FormData {
   course_name: string
   date: string
   weather: string
+  wind_conditions: string
   course_rating: number | null
   slope_rating: number | null
   holes: HoleEntry[]
@@ -58,6 +59,7 @@ interface RoundEntryFormProps {
 // ============================================
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Rainy', 'Windy', 'Cold', 'Mild']
+const WIND_OPTIONS = ['No Wind', '10kmph', '20kmph', '30kmph', '40kmph']
 
 // ============================================
 // COMPONENT
@@ -84,6 +86,7 @@ export default function RoundEntryForm({ initialData, onSave }: RoundEntryFormPr
   const [weather, setWeather] = useState(
     initialData?.grounded_info?.weather_conditions || ''
   )
+  const [windConditions, setWindConditions] = useState('')
   const [holes, setHoles] = useState<HoleEntry[]>([])
 
   // AI-extracted strokes to apply after course selection
@@ -223,6 +226,7 @@ export default function RoundEntryForm({ initialData, onSave }: RoundEntryFormPr
         course_name: selectedCourse.name,
         date,
         weather,
+        wind_conditions: windConditions,
         course_rating: null,
         slope_rating: selectedCourse.slope,
         holes: finalHoles,
@@ -296,9 +300,9 @@ export default function RoundEntryForm({ initialData, onSave }: RoundEntryFormPr
           border: '1px solid rgba(201, 162, 39, 0.3)',
         }}
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {/* Course Searchable Dropdown */}
-          <div className="md:col-span-3" ref={dropdownRef}>
+          <div className="md:col-span-4" ref={dropdownRef}>
             <label className="block text-sm font-medium text-white/70 mb-2">
               Course <span className="text-red-400">*</span>
             </label>
@@ -413,6 +417,24 @@ export default function RoundEntryForm({ initialData, onSave }: RoundEntryFormPr
             >
               <option value="" className="bg-[#1B4D3E]">Select weather</option>
               {WEATHER_OPTIONS.map((w) => (
+                <option key={w} value={w} className="bg-[#1B4D3E]">
+                  {w}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Wind Conditions */}
+          <div>
+            <label className="block text-sm font-medium text-white/70 mb-2">Wind Conditions</label>
+            <select
+              value={windConditions}
+              onChange={(e) => setWindConditions(e.target.value)}
+              className="w-full px-3 py-2 bg-transparent text-white border-b-2 border-[#C9A227] focus:outline-none focus:border-[#C9A227]"
+              style={{ backgroundColor: '#1B4D3E' }}
+            >
+              <option value="" className="bg-[#1B4D3E]">Select wind</option>
+              {WIND_OPTIONS.map((w) => (
                 <option key={w} value={w} className="bg-[#1B4D3E]">
                   {w}
                 </option>

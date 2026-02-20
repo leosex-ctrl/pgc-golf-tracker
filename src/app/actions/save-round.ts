@@ -19,6 +19,7 @@ export interface RoundData {
   course_name: string;
   date: string;
   weather: string;
+  wind_conditions: string;
   course_rating: number | null;
   slope_rating: number | null;
   holes: HoleData[];
@@ -126,6 +127,7 @@ export async function saveRound(data: RoundData): Promise<SaveRoundResult> {
         course_id: courseId,
         date_of_round: data.date,
         weather: weatherCategory,
+        wind_conditions: data.wind_conditions || null,
         temp_c: tempC,
         wind_speed_kph: windSpeedKph,
         total_strokes: totalStrokes,
